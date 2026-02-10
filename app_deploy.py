@@ -75,10 +75,25 @@ GOOGLE_SCOPES = [
 
 
 def _get_google_credentials():
-    """서비스 계정 JSON으로 Credentials 반환. 실패 시 None."""
+    """서비스 계정 Credentials 반환. Streamlit Secrets 우선, 없으면 로컬 JSON 파일."""
+    import json
+    # 1) Streamlit Secrets (배포 시 필수): GCP_SERVICE_ACCOUNT 에 JSON 문자열 또는 dict
+    try:
+        raw = _secret("GCP_SERVICE_ACCOUNT")
+        if not raw and hasattr(st.secrets, "get"):
+            raw = st.secrets.get("gcp_service_account") or st.secrets.get("GCP_SERVICE_ACCOUNT")
+        if raw:
+            if isinstance(raw, str):
+                info = json.loads(raw)
+            else:
+                info = dict(raw)
+            if "type" in info and "private_key" in info:
+                return Credentials.from_service_account_info(info, scopes=GOOGLE_SCOPES)
+    except Exception:
+        pass
+    # 2) 로컬: 환경변수 또는 프로젝트 내 JSON 파일
     creds_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
     if not creds_path or not os.path.isfile(creds_path):
-        # 프로젝트 루트의 기본 경로 시도
         for name in ("service_account.json", "credentials.json", "google_credentials.json"):
             p = os.path.join(BASE_DIR, name)
             if os.path.isfile(p):
@@ -3155,7 +3170,8 @@ st.markdown("""
 
 # 데이터 연결 상태 (구글 시트 연동 확인용)
 _source_labels = {"inout": "입출고 DB", "spao": "스파오 트래킹", "whoau": "후아유 스타일판", "clavis": "클라비스 스타일판", "mixxo": "미쏘 스타일판", "roem": "로엠 스타일판"}
-with st.expander("📊 데이터 연결 상태", expanded=False):
+with st.expander("📊 데이터 연결 상태", expanded=True):
+    has_any = any(_sources.get(k, (None, None))[0] for k in EXCEL_KEYS)
     for key in EXCEL_KEYS:
         raw, ck = _sources.get(key, (None, "none"))
         if raw and len(raw) > 0:
@@ -3170,6 +3186,12 @@ with st.expander("📊 데이터 연결 상태", expanded=False):
         st.caption(f"입출고 데이터: **{len(df_inout)}**행 × **{len(df_inout.columns)}**열 | 컬럼 예: {list(df_inout.columns[:8])}")
     else:
         st.caption("입출고 데이터: **0행** — 입출고 DB 시트가 비었거나 연결되지 않았습니다.")
+    if not has_any:
+        st.markdown("---")
+        st.markdown("**🔧 연결이 안 될 때:** Streamlit Cloud **Manage app → Secrets**에 아래를 넣으세요.")
+        st.markdown("1. **GCP_SERVICE_ACCOUNT** = 서비스 계정 JSON 전체를 한 줄 문자열로 (따옴표·줄바꿈 이스케이프)")
+        st.markdown("2. **BASE_SPREADSHEET_ID**, **SP_SPREADSHEET_ID**, **MI_SPREADSHEET_ID**, **CV_SPREADSHEET_ID**, **WH_SPREADSHEET_ID**, **RM_SPREADSHEET_ID** = 각 시트 ID")
+        st.markdown("3. Google 시트 6개를 **편집 권한**으로 서비스 계정 이메일(`client_email`)과 공유")
 
 # 상단: 제목/업데이트(좌) + 연도/시즌/브랜드/QR 토글(우)
 col_head_left, col_head_right = st.columns([2, 3])
