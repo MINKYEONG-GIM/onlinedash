@@ -110,14 +110,49 @@ def _get_google_credentials():
         return None
 
 
+def _fetch_google_sheet_via_sheets_api(spreadsheet_id, creds):
+    """Sheets API로 시트 데이터 읽어서 openpyxl로 xlsx 바이트 생성. Drive API 403 시 대안."""
+    try:
+        from googleapiclient.discovery import build
+        from openpyxl import Workbook
+        sheets_service = build("sheets", "v4", credentials=creds, cache_discovery=False)
+        meta = sheets_service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
+        sheet_names = [s["properties"]["title"] for s in meta.get("sheets", [])]
+        if not sheet_names:
+            return None
+        wb = Workbook()
+        wb.remove(wb.active)
+        for idx, title in enumerate(sheet_names):
+            try:
+                range_name = f"'{title.replace(chr(39), chr(39)+chr(39))}'" if title else f"Sheet{idx+1}"
+                r = sheets_service.spreadsheets().values().get(
+                    spreadsheetId=spreadsheet_id,
+                    range=range_name,
+                ).execute()
+                rows = r.get("values", [])
+            except Exception:
+                rows = []
+            safe_title = title[:31] if title else f"Sheet{idx+1}"
+            ws = wb.create_sheet(title=safe_title, index=idx)
+            for row in rows:
+                ws.append(row)
+        out = BytesIO()
+        wb.save(out)
+        out.seek(0)
+        return out.read()
+    except Exception:
+        return None
+
+
 @st.cache_data(ttl=300)
 def _fetch_google_sheet_as_xlsx_bytes(spreadsheet_id, _creds_ok=True):
-    """Google 시트를 xlsx 바이트로 내보내기(5분 캐시). _creds_ok=False면 캐시 키만 달라져 실패 후 재시도 가능."""
+    """Google 시트를 xlsx 바이트로. 1) Drive API 시도, 2) 실패 시 Sheets API로 읽어서 xlsx 생성."""
     if not spreadsheet_id or not _creds_ok:
         return None
     creds = _get_google_credentials()
     if not creds:
         return None
+    # 1) Drive API 내보내기 시도
     try:
         from googleapiclient.discovery import build
         from googleapiclient.http import MediaIoBaseDownload
@@ -134,7 +169,9 @@ def _fetch_google_sheet_as_xlsx_bytes(spreadsheet_id, _creds_ok=True):
         fh.seek(0)
         return fh.read()
     except Exception:
-        return None
+        pass
+    # 2) 403 등 실패 시 Sheets API로 읽어서 xlsx 생성 (편집자 공유만 있으면 동작)
+    return _fetch_google_sheet_via_sheets_api(spreadsheet_id, creds)
 
 
 def _diagnose_google_connection():
@@ -165,10 +202,10 @@ def _diagnose_google_connection():
             try:
                 email = getattr(creds, "service_account_email", None)
                 if email:
-                    return False, f"권한 거부(403): 이 이메일을 각 시트에서 [편집자]로 추가하세요 → {email}"
+                    return False, f"Drive 403: 이 이메일을 각 시트 [편집자]로 추가했는지 확인 → {email} (앱은 Drive 실패 시 Sheets API로 자동 재시도합니다.)"
             except Exception:
                 pass
-            return False, "권한 거부(403): 시트를 서비스 계정 이메일(client_email)과 [편집자]로 공유했는지 확인하세요."
+            return False, "권한 거부(403): 시트를 서비스 계정 이메일과 [편집자]로 공유했는지 확인하세요. 앱은 Drive 실패 시 Sheets API로 자동 재시도합니다."
         if "404" in err or "not found" in err.lower():
             return False, "파일 없음(404): BASE_SPREADSHEET_ID가 올바른지, 해당 시트가 삭제되지 않았는지 확인하세요."
         if "enabled" in err.lower() or "has not been used" in err.lower():
