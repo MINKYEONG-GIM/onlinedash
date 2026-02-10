@@ -2,6 +2,7 @@
 import streamlit as st
 import pandas as pd
 import gspread
+import os
 from google.oauth2.service_account import Credentials
 from datetime import datetime
 
@@ -30,8 +31,17 @@ CV_SPREADSHEET_ID   = _secret("CV_SPREADSHEET_ID")
 MI_SPREADSHEET_ID   = _secret("MI_SPREADSHEET_ID")
 RM_SPREADSHEET_ID   = _secret("RM_SPREADSHEET_ID")
 
+GOOGLE_SPREADSHEET_IDS = {
+    "inout": BASE_SPREADSHEET_ID,
+    "spao": SP_SPREADSHEET_ID,
+    "whoau": WH_SPREADSHEET_ID,
+    "clavis": CV_SPREADSHEET_ID,
+    "mixxo": MI_SPREADSHEET_ID,
+    "roem": RM_SPREADSHEET_ID,
+}
+
 # =====================================================
-# Google Credentials
+# Google Credentials (단일 함수로 통합)
 # =====================================================
 def get_google_credentials():
     try:
@@ -44,12 +54,15 @@ def get_google_credentials():
         return None
 
 # =====================================================
-# Google Sheet → DataFrame (핵심 함수)
+# Google Sheet → DataFrame
 # =====================================================
 @st.cache_data(ttl=300)
 def fetch_gsheet_as_df(spreadsheet_id, worksheet_index=0):
+    if not spreadsheet_id:
+        return pd.DataFrame()
+
     creds = get_google_credentials()
-    if not creds or not spreadsheet_id:
+    if not creds:
         return pd.DataFrame()
 
     try:
@@ -58,7 +71,7 @@ def fetch_gsheet_as_df(spreadsheet_id, worksheet_index=0):
         ws = sh.get_worksheet(worksheet_index)
 
         rows = ws.get_all_values()
-        if not rows or len(rows) < 2:
+        if len(rows) < 2:
             return pd.DataFrame()
 
         header = rows[0]
@@ -86,15 +99,13 @@ def find_col(keys, df):
     return None
 
 # =====================================================
-# 입출고 데이터 처리 예시
+# 입출고 데이터 처리
 # =====================================================
 def process_inout_df(df):
     if df.empty:
         return df
 
     date_col = find_col(["최종출고일", "출고일"], df)
-    brand_col = find_col(["브랜드"], df)
-
     if date_col:
         df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
 
@@ -110,33 +121,34 @@ st.caption(f"업데이트 시각: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 # 데이터 로드
 # =====================================================
 with st.spinner("Google Sheets에서 데이터 불러오는 중..."):
-    df_inout = fetch_gsheet_as_df(BASE_SPREADSHEET_ID)
-    df_spao  = fetch_gsheet_as_df(SP_SPREADSHEET_ID)
-    df_wh    = fetch_gsheet_as_df(WH_SPREADSHEET_ID)
-    df_cv    = fetch_gsheet_as_df(CV_SPREADSHEET_ID)
-    df_mi    = fetch_gsheet_as_df(MI_SPREADSHEET_ID)
-    df_rm    = fetch_gsheet_as_df(RM_SPREADSHEET_ID)
+    df_inout = fetch_gsheet_as_df(GOOGLE_SPREADSHEET_IDS["inout"])
+    df_spao  = fetch_gsheet_as_df(GOOGLE_SPREADSHEET_IDS["spao"])
+    df_wh    = fetch_gsheet_as_df(GOOGLE_SPREADSHEET_IDS["whoau"])
+    df_cv    = fetch_gsheet_as_df(GOOGLE_SPREADSHEET_IDS["clavis"])
+    df_mi    = fetch_gsheet_as_df(GOOGLE_SPREADSHEET_IDS["mixxo"])
+    df_rm    = fetch_gsheet_as_df(GOOGLE_SPREADSHEET_IDS["roem"])
 
 # =====================================================
 # 상태 표시
 # =====================================================
 def status(label, df):
     if df.empty:
-        st.error(f"{label}: ❌ 데이터 없음")
+        st.error(f"{label}: 데이터 없음")
     else:
-        st.success(f"{label}: ✅ {len(df)}행")
+        st.success(f"{label}: {len(df)}행 로드됨")
 
 status("입출고 DB", df_inout)
-status("스파오 트래킹", df_spao)
-status("후아유 스타일판", df_wh)
-status("클라비스 스타일판", df_cv)
-status("미쏘 스타일판", df_mi)
-status("로엠 스타일판", df_rm)
+status("스파오", df_spao)
+status("후아유", df_wh)
+status("클라비스", df_cv)
+status("미쏘", df_mi)
+status("로엠", df_rm)
 
 # =====================================================
 # 입출고 미리보기
 # =====================================================
 st.subheader("입출고 데이터 미리보기")
+
 if df_inout.empty:
     st.warning("입출고 데이터가 없습니다.")
 else:
