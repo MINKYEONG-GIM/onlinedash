@@ -1,39 +1,84 @@
 import streamlit as st
 import gspread
+import traceback
 from google.oauth2.service_account import Credentials
 
-st.title("Google Sheet 접근 테스트")
+st.title("Google Sheet 접근 상세 진단")
+
+st.write("### 1. Secrets 로딩 상태")
 
 try:
-    # 1. Secrets에서 서비스 계정 정보 가져오기
     service_account_info = st.secrets["google_service_account"]
+    st.success("google_service_account 로딩 성공")
+except Exception as e:
+    st.error("google_service_account 로딩 실패")
+    st.code(traceback.format_exc())
+    st.stop()
 
-    # 2. 인증 범위 설정
+try:
+    spreadsheet_id = st.secrets["BASE_SPREADSHEET_ID"]
+    st.success("BASE_SPREADSHEET_ID 로딩 성공")
+    st.write("Spreadsheet ID:", spreadsheet_id)
+except Exception as e:
+    st.error("BASE_SPREADSHEET_ID 로딩 실패")
+    st.code(traceback.format_exc())
+    st.stop()
+
+st.write("---")
+st.write("### 2. Credentials 생성")
+
+try:
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive"
     ]
 
-    # 3. Credentials 생성
     credentials = Credentials.from_service_account_info(
         service_account_info,
         scopes=scopes
     )
 
-    # 4. gspread 클라이언트 생성
+    st.success("Credentials 생성 성공")
+    st.write("Service Account Email:", service_account_info.get("client_email"))
+
+except Exception:
+    st.error("Credentials 생성 실패")
+    st.code(traceback.format_exc())
+    st.stop()
+
+st.write("---")
+st.write("### 3. gspread 클라이언트 생성")
+
+try:
     gc = gspread.authorize(credentials)
+    st.success("gspread 클라이언트 생성 성공")
+except Exception:
+    st.error("gspread 클라이언트 생성 실패")
+    st.code(traceback.format_exc())
+    st.stop()
 
-    # 5. 테스트할 스프레드시트 열기
-    spreadsheet_id = st.secrets["BASE_SPREADSHEET_ID"]
+st.write("---")
+st.write("### 4. 스프레드시트 열기")
+
+try:
     sh = gc.open_by_key(spreadsheet_id)
+    st.success("스프레드시트 열기 성공")
+    st.write("Spreadsheet title:", sh.title)
+except Exception:
+    st.error("스프레드시트 열기 실패")
+    st.code(traceback.format_exc())
+    st.stop()
 
-    # 6. 첫 번째 시트 + 첫 번째 셀 읽기
+st.write("---")
+st.write("### 5. 시트 데이터 읽기")
+
+try:
     worksheet = sh.sheet1
     value = worksheet.cell(1, 1).value
 
-    st.success("시트 접근 성공")
+    st.success("시트 데이터 읽기 성공")
     st.write("A1 셀 값:", value)
 
-except Exception as e:
-    st.error("시트 접근 실패")
-    st.code(str(e))
+except Exception:
+    st.error("시트 데이터 읽기 실패")
+    st.code(traceback.format_exc())
