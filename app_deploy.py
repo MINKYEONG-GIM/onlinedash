@@ -136,6 +136,41 @@ def _fetch_google_sheet_as_xlsx_bytes(spreadsheet_id, _creds_ok=True):
     except Exception:
         return None
 
+
+def _diagnose_google_connection():
+    """연결 실패 시 원인 진단. (인증_성공여부, 메시지) 반환. 비밀값 노출 없음."""
+    creds = _get_google_credentials()
+    if not creds:
+        return False, "인증 실패: Secrets의 [google_service_account]를 확인하세요. type, private_key, client_email 등이 있고, private_key는 -----BEGIN PRIVATE KEY----- 로 시작해야 합니다."
+    sid = GOOGLE_SPREADSHEET_IDS.get("inout") or BASE_SPREADSHEET_ID
+    if not sid:
+        return False, "BASE_SPREADSHEET_ID가 비어 있습니다. Secrets에 값을 넣으세요."
+    try:
+        from googleapiclient.discovery import build
+        from googleapiclient.http import MediaIoBaseDownload
+        service = build("drive", "v3", credentials=creds, cache_discovery=False)
+        request = service.files().export_media(
+            fileId=sid,
+            mimeType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        fh = BytesIO()
+        downloader = MediaIoBaseDownload(fh, request)
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
+        return True, "인증 성공 + 시트 다운로드 성공. (그래도 데이터 없음이면 Reboot app 후 새로고침 해보세요.)"
+    except Exception as e:
+        err = (str(e) or "").strip()[:300]
+        if "403" in err or "Forbidden" in err or "permission" in err.lower() or "Permission" in err:
+            return False, "권한 거부(403): 시트를 서비스 계정 이메일(client_email)과 [편집자]로 공유했는지 확인하세요. 뷰어만으로는 불가합니다."
+        if "404" in err or "not found" in err.lower():
+            return False, "파일 없음(404): BASE_SPREADSHEET_ID가 올바른지, 해당 시트가 삭제되지 않았는지 확인하세요."
+        if "enabled" in err.lower() or "has not been used" in err.lower():
+            return False, "Drive API 비활성: Google Cloud 콘솔 → API 및 서비스 → 사용자 인증 정보 → Drive API 사용 설정."
+        if "invalid" in err.lower() and "key" in err.lower():
+            return False, "private_key 형식 오류: 줄바꿈은 \\n 그대로 두고, BEGIN/END 줄과 키 내용이 빠짐없이 있는지 확인하세요."
+        return False, f"API 오류: {err}"
+
 # 실행 시각 고정(새로고침 전까지 동일 값 유지)
 update_time = datetime.now()
 
@@ -3191,11 +3226,29 @@ with st.expander("📊 데이터 연결 상태", expanded=True):
     else:
         st.markdown(f'<p style="{_conn_style}">입출고 데이터: <strong>0행</strong> — 입출고 DB 시트가 비었거나 연결되지 않았습니다.</p>', unsafe_allow_html=True)
     if not has_any:
+        try:
+            diag_ok, diag_msg = _diagnose_google_connection()
+            st.markdown(f'<hr style="border-color: #475569;">', unsafe_allow_html=True)
+            st.markdown(f'<p style="{_conn_style}"><strong>🔍 진단:</strong> {diag_msg}</p>', unsafe_allow_html=True)
+        except Exception as _:
+            pass
         st.markdown(f'<hr style="border-color: #475569;">', unsafe_allow_html=True)
-        st.markdown(f'<p style="{_conn_style}"><strong>🔧 연결이 안 될 때:</strong> Streamlit <strong>Manage app → Secrets</strong>에 다음을 확인하세요.</p>', unsafe_allow_html=True)
-        st.markdown(f'<p style="{_conn_style}">1. <strong>서비스 계정:</strong> <code>[google_service_account]</code> 섹션에 type, project_id, private_key_id, private_key, client_email 등 입력</p>', unsafe_allow_html=True)
-        st.markdown(f'<p style="{_conn_style}">2. <strong>스프레드시트 ID:</strong> BASE_SPREADSHEET_ID, SP_SPREADSHEET_ID, MI_SPREADSHEET_ID, CV_SPREADSHEET_ID, WH_SPREADSHEET_ID, RM_SPREADSHEET_ID</p>', unsafe_allow_html=True)
-        st.markdown(f'<p style="{_conn_style}">3. <strong>시트 공유:</strong> 위 6개 Google 시트를 서비스 계정 이메일(client_email)과 <strong>편집 권한</strong>으로 공유</p>', unsafe_allow_html=True)
+        st.markdown(f'<p style="{_conn_style}"><strong>🔧 연결이 안 될 때 — 아래 순서대로 확인하세요</strong></p>', unsafe_allow_html=True)
+        st.markdown(f'<p style="{_conn_style}"><strong>1) Streamlit Cloud Secrets</strong><br>'
+            '· 앱 페이지 오른쪽 아래 <strong>Manage app</strong> → <strong>Settings</strong> → <strong>Secrets</strong> 이동<br>'
+            '· <code>BASE_SPREADSHEET_ID</code> = "1CMYhX0SDGfhBs-jMv4OcRC3qrHDRL-7LtCt8McDkrns" (따옴표 포함, 값이 비어 있지 않은지 확인)<br>'
+            '· <code>[google_service_account]</code> 섹션이 있고, 그 안에 <code>type</code>, <code>project_id</code>, <code>private_key_id</code>, <code>private_key</code>, <code>client_email</code> 가 모두 있는지 확인<br>'
+            '· <code>private_key</code> 는 반드시 <code>-----BEGIN PRIVATE KEY-----</code> 로 시작하고 <code>-----END PRIVATE KEY-----</code> 로 끝나야 함</p>', unsafe_allow_html=True)
+        st.markdown(f'<p style="{_conn_style}"><strong>2) Google 시트(입출고 DB) 공유</strong><br>'
+            '· 입출고 DB로 쓰는 Google 스프레드시트를 브라우저에서 연다<br>'
+            '· 우측 상단 <strong>공유</strong> 버튼 클릭<br>'
+            '· Secrets 의 <code>client_email</code> 값(예: xxx@프로젝트명.iam.gserviceaccount.com)을 정확히 복사해 <strong>사용자 추가</strong>란에 붙여넣기<br>'
+            '· 권한을 <strong>편집자</strong>로 선택 후 전송 (뷰어만으로는 내보내기 불가)</p>', unsafe_allow_html=True)
+        st.markdown(f'<p style="{_conn_style}"><strong>3) 서비스 계정 키</strong><br>'
+            '· Google Cloud 콘솔 → IAM 및 관리자 → 서비스 계정 → 해당 계정 → 키 탭<br>'
+            '· Secrets 에 넣은 <code>private_key</code> 가 이 계정에서 만든 키 내용과 동일한지 확인 (키를 다시 만들었다면 새 private_key 로 Secrets 수정)</p>', unsafe_allow_html=True)
+        st.markdown(f'<p style="{_conn_style}"><strong>4) 앱 재시작</strong><br>'
+            '· Secrets 를 수정한 경우: Manage app → <strong>Reboot app</strong> 으로 앱을 한 번 재시작한 뒤 새로고침</p>', unsafe_allow_html=True)
 
 # 상단: 제목/업데이트(좌) + 연도/시즌/브랜드/QR 토글(우)
 col_head_left, col_head_right = st.columns([2, 3])
