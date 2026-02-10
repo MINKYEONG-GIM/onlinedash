@@ -12,7 +12,19 @@ from io import BytesIO
 # 페이지 설정: 대시보드 기본 레이아웃과 사이드바 상태 고정
 st.set_page_config(page_title="온라인 리드타임 대시보드", layout="wide", initial_sidebar_state="expanded")
 
+# Google Sheets 스프레드시트 ID → Streamlit Secrets에서 로드 (보안, 없으면 빈 문자열로 NameError 방지)
+def _secret(key, default=""):
+    try:
+        return st.secrets.get(key, default) or default
+    except Exception:
+        return default
 
+BASE_SPREADSHEET_ID = _secret("BASE_SPREADSHEET_ID")
+SP_SPREADSHEET_ID = _secret("SP_SPREADSHEET_ID")
+MI_SPREADSHEET_ID = _secret("MI_SPREADSHEET_ID")
+CV_SPREADSHEET_ID = _secret("CV_SPREADSHEET_ID")
+WH_SPREADSHEET_ID = _secret("WH_SPREADSHEET_ID")
+RM_SPREADSHEET_ID = _secret("RM_SPREADSHEET_ID")
 
 GOOGLE_SPREADSHEET_IDS = {
     "inout": BASE_SPREADSHEET_ID,
