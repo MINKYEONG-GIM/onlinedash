@@ -3,6 +3,7 @@ import streamlit as st
 import pandas as pd
 import gspread
 import os
+import html as html_lib
 from google.oauth2.service_account import Credentials
 from datetime import datetime
 from io import BytesIO
