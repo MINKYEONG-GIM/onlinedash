@@ -3246,12 +3246,25 @@ st.markdown("""
     .stMarkdown div.year-label, .stMarkdown div.year-fixed, .stMarkdown div.qr-block { color: #f8fafc !important; }
     .stDownloadButton button { background: #14b8a6 !important; color: #0f172a !important; border-radius: 8px; }
     .stCaption { color: #94a3b8 !important; }
+    
+    /* 데이터 연결 상태: 텍스트 흰색 강제 (다크 배경에서 보이게) */
+    .connection-status-block,
+    .connection-status-block p,
+    .connection-status-block strong,
+    .connection-status-block code,
+    .connection-status-block hr { color: #ffffff !important; }
+    .connection-status-block code { background: #334155; padding: 0.1em 0.3em; border-radius: 4px; }
+    .connection-status-block hr { border-color: #94a3b8 !important; }
+    /* expander 제목(데이터 연결 상태)도 흰색 */
+    [data-testid="stExpander"] summary,
+    [data-testid="stExpander"] summary p { color: #ffffff !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# 데이터 연결 상태 (구글 시트 연동 확인용) — 텍스트 흰색으로 표시
+# 데이터 연결 상태 (구글 시트 연동 확인용) — 텍스트 흰색 강제
 _source_labels = {"inout": "입출고 DB", "spao": "스파오 트래킹", "whoau": "후아유 스타일판", "clavis": "클라비스 스타일판", "mixxo": "미쏘 스타일판", "roem": "로엠 스타일판"}
-_conn_style = "color: #f8fafc !important;"
+_conn_c = "connection-status-block"
+_conn_style = "color: #ffffff !important;"
 with st.expander("📊 데이터 연결 상태", expanded=True):
     has_any = any(_sources.get(k, (None, None))[0] for k in EXCEL_KEYS)
     for key in EXCEL_KEYS:
@@ -3259,38 +3272,38 @@ with st.expander("📊 데이터 연결 상태", expanded=True):
         if raw and len(raw) > 0:
             size_kb = len(raw) / 1024
             if ck.startswith("gs:"):
-                st.markdown(f'<p style="{_conn_style}"><strong>{_source_labels.get(key, key)}</strong>: ✅ Google 시트 연결됨 ({size_kb:.1f} KB)</p>', unsafe_allow_html=True)
+                st.markdown(f'<p class="{_conn_c}" style="{_conn_style}"><strong>{_source_labels.get(key, key)}</strong>: ✅ Google 시트 연결됨 ({size_kb:.1f} KB)</p>', unsafe_allow_html=True)
             else:
-                st.markdown(f'<p style="{_conn_style}"><strong>{_source_labels.get(key, key)}</strong>: ✅ 로컬 파일 ({size_kb:.1f} KB)</p>', unsafe_allow_html=True)
+                st.markdown(f'<p class="{_conn_c}" style="{_conn_style}"><strong>{_source_labels.get(key, key)}</strong>: ✅ 로컬 파일 ({size_kb:.1f} KB)</p>', unsafe_allow_html=True)
         else:
-            st.markdown(f'<p style="{_conn_style}"><strong>{_source_labels.get(key, key)}</strong>: ❌ 데이터 없음 (Secrets·공유 확인)</p>', unsafe_allow_html=True)
+            st.markdown(f'<p class="{_conn_c}" style="{_conn_style}"><strong>{_source_labels.get(key, key)}</strong>: ❌ 데이터 없음 (Secrets·공유 확인)</p>', unsafe_allow_html=True)
     if df_inout is not None and not df_inout.empty:
-        st.markdown(f'<p style="{_conn_style}">입출고 데이터: <strong>{len(df_inout)}</strong>행 × <strong>{len(df_inout.columns)}</strong>열 | 컬럼 예: {list(df_inout.columns[:8])}</p>', unsafe_allow_html=True)
+        st.markdown(f'<p class="{_conn_c}" style="{_conn_style}">입출고 데이터: <strong>{len(df_inout)}</strong>행 × <strong>{len(df_inout.columns)}</strong>열 | 컬럼 예: {list(df_inout.columns[:8])}</p>', unsafe_allow_html=True)
     else:
-        st.markdown(f'<p style="{_conn_style}">입출고 데이터: <strong>0행</strong> — 입출고 DB 시트가 비었거나 연결되지 않았습니다.</p>', unsafe_allow_html=True)
+        st.markdown(f'<p class="{_conn_c}" style="{_conn_style}">입출고 데이터: <strong>0행</strong> — 입출고 DB 시트가 비었거나 연결되지 않았습니다.</p>', unsafe_allow_html=True)
     if not has_any:
         try:
             diag_ok, diag_msg = _diagnose_google_connection()
-            st.markdown(f'<hr style="border-color: #475569;">', unsafe_allow_html=True)
-            st.markdown(f'<p style="{_conn_style}"><strong>🔍 진단:</strong> {diag_msg}</p>', unsafe_allow_html=True)
+            st.markdown(f'<hr class="{_conn_c}" style="border-color: #94a3b8;">', unsafe_allow_html=True)
+            st.markdown(f'<p class="{_conn_c}" style="{_conn_style}"><strong>🔍 진단:</strong> {diag_msg}</p>', unsafe_allow_html=True)
         except Exception as _:
             pass
-        st.markdown(f'<hr style="border-color: #475569;">', unsafe_allow_html=True)
-        st.markdown(f'<p style="{_conn_style}"><strong>🔧 연결이 안 될 때 — 아래 순서대로 확인하세요</strong></p>', unsafe_allow_html=True)
-        st.markdown(f'<p style="{_conn_style}"><strong>1) Streamlit Cloud Secrets</strong><br>'
+        st.markdown(f'<hr class="{_conn_c}" style="border-color: #94a3b8;">', unsafe_allow_html=True)
+        st.markdown(f'<p class="{_conn_c}" style="{_conn_style}"><strong>🔧 연결이 안 될 때 — 아래 순서대로 확인하세요</strong></p>', unsafe_allow_html=True)
+        st.markdown(f'<p class="{_conn_c}" style="{_conn_style}"><strong>1) Streamlit Cloud Secrets</strong><br>'
             '· 앱 페이지 오른쪽 아래 <strong>Manage app</strong> → <strong>Settings</strong> → <strong>Secrets</strong> 이동<br>'
             '· <code>BASE_SPREADSHEET_ID</code> = "1CMYhX0SDGfhBs-jMv4OcRC3qrHDRL-7LtCt8McDkrns" (따옴표 포함, 값이 비어 있지 않은지 확인)<br>'
             '· <code>[google_service_account]</code> 섹션이 있고, 그 안에 <code>type</code>, <code>project_id</code>, <code>private_key_id</code>, <code>private_key</code>, <code>client_email</code> 가 모두 있는지 확인<br>'
             '· <code>private_key</code> 는 반드시 <code>-----BEGIN PRIVATE KEY-----</code> 로 시작하고 <code>-----END PRIVATE KEY-----</code> 로 끝나야 함</p>', unsafe_allow_html=True)
-        st.markdown(f'<p style="{_conn_style}"><strong>2) Google 시트(입출고 DB) 공유</strong><br>'
+        st.markdown(f'<p class="{_conn_c}" style="{_conn_style}"><strong>2) Google 시트(입출고 DB) 공유</strong><br>'
             '· 입출고 DB로 쓰는 Google 스프레드시트를 브라우저에서 연다<br>'
             '· 우측 상단 <strong>공유</strong> 버튼 클릭<br>'
             '· Secrets 의 <code>client_email</code> 값(예: xxx@프로젝트명.iam.gserviceaccount.com)을 정확히 복사해 <strong>사용자 추가</strong>란에 붙여넣기<br>'
             '· 권한을 <strong>편집자</strong>로 선택 후 전송 (뷰어만으로는 내보내기 불가)</p>', unsafe_allow_html=True)
-        st.markdown(f'<p style="{_conn_style}"><strong>3) 서비스 계정 키</strong><br>'
+        st.markdown(f'<p class="{_conn_c}" style="{_conn_style}"><strong>3) 서비스 계정 키</strong><br>'
             '· Google Cloud 콘솔 → IAM 및 관리자 → 서비스 계정 → 해당 계정 → 키 탭<br>'
             '· Secrets 에 넣은 <code>private_key</code> 가 이 계정에서 만든 키 내용과 동일한지 확인 (키를 다시 만들었다면 새 private_key 로 Secrets 수정)</p>', unsafe_allow_html=True)
-        st.markdown(f'<p style="{_conn_style}"><strong>4) 앱 재시작</strong><br>'
+        st.markdown(f'<p class="{_conn_c}" style="{_conn_style}"><strong>4) 앱 재시작</strong><br>'
             '· Secrets 를 수정한 경우: Manage app → <strong>Reboot app</strong> 으로 앱을 한 번 재시작한 뒤 새로고침</p>', unsafe_allow_html=True)
 
 # 상단: 제목/업데이트(좌) + 연도/시즌/브랜드/QR 토글(우)
