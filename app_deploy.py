@@ -1,15 +1,36 @@
 # -*- coding: utf-8 -*-
+"""
+온라인 리드타임 대시보드 (Streamlit)
+
+이 파일은 "한 번에 실행되는 스크립트" 형태의 Streamlit 앱입니다.
+
+### 데이터 소스
+- **기본**: Google Sheets(서비스 계정) → xlsx로 export → pandas/openpyxl로 로드
+- **Fallback(로컬 개발용)**: `DB/` 폴더의 엑셀 파일
+
+### 큰 흐름(TOC)
+- (A) 설정/Secrets/경로 상수
+- (B) Google 인증 및 시트(xlsx) 다운로드 헬퍼
+- (C) 엑셀 바이트 → DataFrame 로더(입출고/브랜드별)
+- (D) 집계/포맷/표(HTML) 생성 유틸
+- (E) UI 렌더링(섹션별 화면 구성 + 다운로드)
+
+리팩터링 원칙: **기능은 유지**하고, 섹션별 목적/경계를 명확히 하여 유지보수를 쉽게 합니다.
+"""
+
+from __future__ import annotations
+
 import streamlit as st
 import pandas as pd
-import gspread
-import os
 import html as html_lib
-from google.oauth2.service_account import Credentials
+import os
 from datetime import datetime
 from io import BytesIO
 
+from google.oauth2.service_account import Credentials
+
 # =====================================================
-# 페이지 설정
+# (A) Streamlit 기본 설정
 # =====================================================
 st.set_page_config(
     page_title="온라인 리드타임 대시보드",
@@ -18,7 +39,8 @@ st.set_page_config(
 )
 
 # =====================================================
-# Secrets 안전 로드
+# (A) Secrets / Spreadsheet IDs
+# - Streamlit Cloud의 Secrets에 들어있는 값들을 안전하게 읽습니다.
 # =====================================================
 def _secret(key, default=""):
     try:
@@ -42,102 +64,11 @@ GOOGLE_SPREADSHEET_IDS = {
     "roem": RM_SPREADSHEET_ID,
 }
 
-# =====================================================
-# Google Credentials (단일 함수로 통합)
-# =====================================================
-def get_google_credentials():
-    try:
-        info = dict(st.secrets["google_service_account"])
-        return Credentials.from_service_account_info(
-            info,
-            scopes=["https://www.googleapis.com/auth/spreadsheets.readonly"]
-        )
-    except Exception:
-        return None
 
 # =====================================================
-# Google Sheet → DataFrame
+# (A) 로컬 개발용 엑셀 경로(Fallback)
+# - 배포(Cloud)에서는 Google Sheets를 사용하지만, 로컬 실행을 위한 경로도 유지합니다.
 # =====================================================
-@st.cache_data(ttl=300)
-def fetch_gsheet_as_df(spreadsheet_id, worksheet_index=0):
-    if not spreadsheet_id:
-        return pd.DataFrame()
-
-    creds = get_google_credentials()
-    if not creds:
-        return pd.DataFrame()
-
-    try:
-        gc = gspread.authorize(creds)
-        sh = gc.open_by_key(spreadsheet_id)
-        ws = sh.get_worksheet(worksheet_index)
-
-        rows = ws.get_all_values()
-        if len(rows) < 2:
-            return pd.DataFrame()
-
-        header = rows[0]
-        data = rows[1:]
-
-        df = pd.DataFrame(data, columns=header)
-        df.columns = [str(c).strip() for c in df.columns]
-        return df
-
-    except Exception:
-        return pd.DataFrame()
-
-# =====================================================
-# 컬럼 자동 탐색
-# =====================================================
-def find_col(keys, df):
-    for k in keys:
-        for c in df.columns:
-            if k == str(c).strip():
-                return c
-    for k in keys:
-        for c in df.columns:
-            if k in str(c):
-                return c
-    return None
-
-# =====================================================
-# 입출고 데이터 처리
-# =====================================================
-def process_inout_df(df):
-    if df.empty:
-        return df
-
-    date_col = find_col(["최종출고일", "출고일"], df)
-    if date_col:
-        df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
-
-    return df
-
-# =====================================================
-# UI
-# =====================================================
-st.title("온라인 리드타임 대시보드")
-st.caption(f"업데이트 시각: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-
-# =====================================================
-# 데이터 로드
-# =====================================================
-with st.spinner("Google Sheets에서 데이터 불러오는 중..."):
-    df_inout = fetch_gsheet_as_df(GOOGLE_SPREADSHEET_IDS["inout"])
-    df_spao  = fetch_gsheet_as_df(GOOGLE_SPREADSHEET_IDS["spao"])
-    df_wh    = fetch_gsheet_as_df(GOOGLE_SPREADSHEET_IDS["whoau"])
-    df_cv    = fetch_gsheet_as_df(GOOGLE_SPREADSHEET_IDS["clavis"])
-    df_mi    = fetch_gsheet_as_df(GOOGLE_SPREADSHEET_IDS["mixxo"])
-    df_rm    = fetch_gsheet_as_df(GOOGLE_SPREADSHEET_IDS["roem"])
-
-# =====================================================
-# (진단용 UI 제거)
-# - 로드 행 수 / 미리보기 출력은 숨김
-# =====================================================
-df_inout = process_inout_df(df_inout)
-
-
-# 로컬 개발용: DB 폴더 엑셀 경로(배포 시 Google Sheets 사용)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_DIR = os.path.join(BASE_DIR, "DB")
 inout_file_path = os.path.join(DB_DIR, "260202 DB4(1).xlsx")
@@ -170,7 +101,10 @@ PATH_MAP = {
     "roem": roem_photo_file_path,
 }
 
-# Google API: 시트를 xlsx로 내보내기 위해 Drive API 사용
+# =====================================================
+# (B) Google 인증/다운로드 관련
+# - Drive API(export) 우선 → 실패 시 Sheets API로 대체 다운로드
+# =====================================================
 GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets.readonly",
     "https://www.googleapis.com/auth/drive.readonly",
@@ -430,7 +364,12 @@ def ensure_xlsx_path(original_path):
         return None
 
 def find_col(keys, df=None):
-    # 컬럼 자동 탐지: 1) 정확 일치 우선, 2) 부분 포함 매칭
+    """
+    (C) 엑셀/시트 컬럼 자동 탐지 유틸.
+
+    - **정확 일치**를 우선 사용
+    - 없으면 **부분 포함 매칭**으로 보조 탐색
+    """
     if df is None or df.empty:
         return None
     cols = list(df.columns)
@@ -447,15 +386,25 @@ def find_col(keys, df=None):
     return None
 
 def safe_sum(df, col_name):
-    # 안전 합계: 컬럼이 없거나 변환 불가면 0 처리
+    """(D) 집계 유틸: 컬럼이 없거나 숫자 변환이 실패하면 0으로 합산."""
     if df is None or col_name is None or col_name not in df.columns:
         return 0
     return pd.to_numeric(df[col_name], errors="coerce").sum()
 
 @st.cache_data
 def load_inout_data(io_bytes=None, _cache_key=None):
-    # 입출고 엑셀 로딩 + 헤더 자동 탐지 + 브랜드 추론(스타일코드 앞 2글자)
-    # io_bytes: 서버 메모리(bytes) 또는 None이면 로컬 경로 시도
+    """
+    (C) 입출고 DB 로더.
+
+    역할:
+    - 엑셀(xlsx bytes)을 DataFrame으로 로드
+    - 헤더 행을 자동 추정(상단 20행 스캔)
+    - 스타일코드 접두어(2글자)로 브랜드를 **강제 추론**하여 `브랜드` 컬럼을 표준화
+
+    인자:
+    - `io_bytes`: Google/로컬에서 읽은 xlsx 바이트. None이면 로컬 파일로 fallback 시도
+    - `_cache_key`: Streamlit cache 키(소스가 바뀌면 변경되도록)
+    """
     if _cache_key is None:
         _cache_key = "default"
     if io_bytes is None or len(io_bytes) == 0:
@@ -534,14 +483,24 @@ def load_inout_data(io_bytes=None, _cache_key=None):
     return df
 
 
-# ---------- 데이터 소스 확보(업로드 또는 로컬) 후 로드 ----------
+# =====================================================
+# (C) 데이터 소스 확보 → 로드(전역 1회)
+# - `_sources`: key -> (xlsx_bytes 또는 None, cache_key)
+# - 주의: xlsx bytes를 메모리에 들고 있으므로(특히 입출고 DB) 과도한 메모리 사용 시
+#   Cloud 환경에서는 OOM/Server Error가 날 수 있습니다. (추후 "필요할 때만 다운로드" 구조로 개선 가능)
+# =====================================================
 _sources = get_excel_sources()
 _inout_src = _sources.get("inout", (None, None))
 df_inout = load_inout_data(_inout_src[0], _cache_key=_inout_src[1])
 
 @st.cache_data
 def load_spao_register_days(io_bytes=None, _cache_key=None):
-    # 스파오 트래킹판에서 "공홈등록소요일" 컬럼을 찾아 평균 산출
+    """
+    (C) [스파오] 트래킹판 로더: '공홈등록소요일' 평균 산출.
+
+    반환:
+    - (평균, 표본 수, 헤더셀 위치) 또는 None
+    """
     if _cache_key is None:
         _cache_key = "spao_reg_default"
     if io_bytes is None or len(io_bytes) == 0:
@@ -787,6 +746,11 @@ def load_spao_register_avg_days(io_bytes=None, _cache_key=None):
         return None
     return float(sum(diffs)) / len(diffs)
 
+# =====================================================
+# (C) 브랜드별 트래킹 지표 로드(전역 1회)
+# - 아래는 각 브랜드 엑셀에서 필요한 지표를 "로더 함수 호출"로 뽑아내는 구간입니다.
+# - 값들은 이후 UI 섹션에서 테이블/지표 표시에 사용됩니다.
+# =====================================================
 _spao_src = _sources.get("spao", (None, None))
 spao_register_result = load_spao_register_days(_spao_src[0], _cache_key=_spao_src[1])
 spao_register_days = spao_register_result[0] if spao_register_result else None
@@ -799,7 +763,11 @@ spao_photo_header_cell = spao_photo_result[2] if spao_photo_result else None
 spao_register_style_count = load_spao_registered_style_count(_spao_src[0], _cache_key=_spao_src[1])
 spao_register_avg_days = load_spao_register_avg_days(_spao_src[0], _cache_key=_spao_src[1])
 
+# =====================================================
+# (C) [후아유] 스타일판 로더/지표 추출
+# =====================================================
 def _whoau_bytes(io_bytes):
+    """(C) [후아유] 로더 공통: bytes가 없으면 로컬 파일에서 읽어오기."""
     if io_bytes is not None and len(io_bytes) > 0:
         return io_bytes
     path = ensure_xlsx_path(whoau_photo_file_path) if os.path.exists(whoau_photo_file_path) else None
@@ -858,6 +826,10 @@ def load_whoau_metric_days(target_keywords, io_bytes=None, _cache_key=None):
     header_cell = f"{col_letter(col_idx)}{header_row_idx + 1}"
     return float(mean_val), int(values.count()), header_cell
 
+# =====================================================
+# (C) [클라비스/미쏘/로엠] 스타일판 로더/지표 추출 (공통 패턴)
+# - bytes 확보 helper → metric_days/등록/미등록 등 지표 로더로 이어집니다.
+# =====================================================
 def _clavis_bytes(io_bytes):
     if io_bytes is not None and len(io_bytes) > 0:
         return io_bytes
@@ -2852,6 +2824,11 @@ if roem_register_avg_days is None:
 roem_unregistered_online_count = load_roem_unregistered_online_count(_roem_src[0], _cache_key=_roem_src[1])
 spao_unregistered_online_count = load_spao_unregistered_online_count(_spao_src[0], _cache_key=_spao_src[1])
 
+# =====================================================
+# (D) 입출고 DB: 주요 컬럼 매핑(자동 탐지) + 보정 규칙
+# - 시트 컬럼명이 바뀌어도 최대한 동작하도록 `find_col()`로 탐지합니다.
+# - 일부 컬럼은 위치 기반 fallback이 있어, 시트 포맷 변경 시 점검 필요합니다.
+# =====================================================
 inout_year_col = find_col(["년도", "연도", "년", "year", "Year"], df=df_inout)
 inout_season_col = find_col(["시즌", "season", "Season"], df=df_inout)
 inout_brand_col = find_col(["브랜드", "brand"], df=df_inout)
@@ -2902,6 +2879,10 @@ def detect_result_column(df):
             return c
     return None
 
+# =====================================================
+# (D) 입출고 DB 필터/집계 유틸
+# - "결과" 행 필터, 최초입고일 필터, 브랜드별 합계/유니크 집계 등
+# =====================================================
 def filter_result_rows(df):
     # 결과 컬럼이 있을 때만 "결과" 포함 행 필터링
     if df is None or df.empty:
@@ -3097,7 +3078,10 @@ def count_unique_sku_with_amount(df, style_col_name, color_col_name, amount_col_
     sku_amount_sum = amount_series[valid_mask].groupby(sku_series).sum()
     return int((sku_amount_sum > 0).sum())
 
-# 온라인 판매 프로세스별 소요일수(기본값; 스파오 데이터 있으면 덮어씀)
+# =====================================================
+# (D) KPI 기본 파라미터(프로세스 리드타임)
+# - 기본값을 두고, 실제 트래킹 데이터(예: 스파오)에서 값이 있으면 덮어씁니다.
+# =====================================================
 days_photo_handover = 1.0
 days_shooting = 10.0
 days_product_register = 0.0
@@ -3106,6 +3090,10 @@ if spao_photo_days is not None:
 if spao_register_days is not None:
     days_product_register = round(spao_register_days, 1)
 
+# =====================================================
+# (D) KPI 초기값(집계 결과를 담을 변수들)
+# - 아래 변수들은 이후 UI 섹션에서 계산/표시됩니다.
+# =====================================================
 kpi_out_amt = 0
 kpi_sale_amt = 0
 online_sales_amt = 0
@@ -3114,7 +3102,10 @@ kpi_in_sty = 0
 kpi_out_sty = 0
 kpi_sale_sty = 0
 
-# 브랜드/BU 그룹 하드코딩(표 구성 및 합산 기준)
+# =====================================================
+# (D) 브랜드/BU 그룹 정의
+# - 표 구성/합산 기준으로 사용되는 고정 목록입니다.
+# =====================================================
 brands_list = ["스파오", "뉴발란스", "뉴발란스키즈", "후아유", "슈펜", "미쏘", "로엠", "클라비스", "에블린"]
 bu_groups = [
     ("캐쥬얼BU", ["스파오"]),
@@ -3122,7 +3113,10 @@ bu_groups = [
     ("여성BU", ["미쏘", "로엠", "클라비스", "에블린"]),
 ]
 
-# 커스텀 CSS — 다크 대시보드 무드(컴포넌트 구조 의존, 버전 변경에 민감)
+# =====================================================
+# (E) UI 스타일(CSS)
+# - Streamlit 내부 DOM 구조에 의존하므로, Streamlit 버전 변경 시 깨질 수 있습니다.
+# =====================================================
 st.markdown("""
 <style>
     /* 전체 다크 배경 */
@@ -3352,6 +3346,10 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# =====================================================
+# (E) UI 렌더링
+# - 상단 헤더(타이틀/필터/토글) → KPI/요약 → 모니터링 표/다운로드 → 푸터
+# =====================================================
 # 상단: 제목/업데이트(좌) + 연도/시즌/브랜드/QR 토글(우)
 col_head_left, col_head_right = st.columns([2, 3])
 with col_head_left:
@@ -3904,6 +3902,12 @@ if "온라인등록율" in monitor_df.columns:
     )
 monitor_df = monitor_df[monitor_columns]
 def build_monitor_table_html(df, rate_by_brand):
+    """
+    (D) [상품등록 모니터링] HTML 테이블 생성 함수.
+
+    - Streamlit에서 `unsafe_allow_html=True`로 렌더링됩니다.
+    - 색상 점/툴팁 등 표시 로직이 포함되어 있어, UI/스타일 변경 시 이 함수부터 확인하면 됩니다.
+    """
     # HTML 테이블 직접 렌더링(색상 점/툴팁 포함)
     def safe_cell(val):
         text = "" if val is None else str(val)
@@ -4426,6 +4430,12 @@ def build_season_detail_table(base_df, brand_name, use_sty, order_base_df=None, 
     return pd.DataFrame(rows)[columns]
 
 def build_brand_season_table_html(display_df, base_df, use_sty, order_base_df=None, in_base_df=None):
+    """
+    (D) [입출고 모니터링] 브랜드 행 클릭 → 시즌 상세 토글 HTML 테이블 생성.
+
+    - 브랜드/BU 행 + 시즌 상세 행을 함께 생성합니다.
+    - HTML 이스케이프는 `html_lib.escape()`로 처리합니다.
+    """
     # 브랜드 행 클릭 시 시즌 행 토글되는 HTML 테이블 생성
     cols = ["브랜드"] + table_columns
     header_cells = "".join(
