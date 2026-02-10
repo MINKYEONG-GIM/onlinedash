@@ -3436,6 +3436,28 @@ if df_inout_in_base is not None and not df_inout_in_base.empty and inout_style_c
         style_series = style_series.replace(r"^\s*$", pd.NA, regex=True).dropna()
         whoau_inbound_styles = set(style_series.tolist())
 
+# 입고 스타일수(브랜드별) — 위 입출고 표와 아래 모니터 표가 동일한 수치를 쓰도록 한 번만 계산
+# 시즌 상세/KPI와 동일: 입고액(또는 누적입고액)이 1 이상인 스타일만 카운트 → 574 등
+_in_amt_col = inout_cum_in_amt_col or inout_in_amt_col
+if (
+    df_inout_in_base is not None
+    and not df_inout_in_base.empty
+    and inout_style_col
+    and _in_amt_col
+    and _in_amt_col in df_inout_in_base.columns
+):
+    brand_in_qty = count_unique_style_with_amount_by_brand(
+        df_inout_in_base,
+        inout_style_col,
+        _in_amt_col,
+        min_amount=1,
+    )
+else:
+    brand_in_qty = count_unique_style_by_brand(
+        df_inout_in_base,
+        inout_style_col,
+    )
+
 # KPI 산출(금액/스타일 수)
 kpi_in_amt = safe_sum(
     df_inout_in_filtered,
@@ -3696,26 +3718,7 @@ monitor_columns = [
     "포토 미업로드(포토팀)",
     "상품 미등록(온라인)",
 ]
-# 상단 입출고 표/KPI와 동일: "입고상품 기준" = 실제 입고액이 1 이상인 스타일만 카운트
-_amt_col = inout_cum_in_amt_col or inout_in_amt_col
-_has_amt = (
-    df_inout_in_base is not None
-    and not df_inout_in_base.empty
-    and _amt_col
-    and _amt_col in df_inout_in_base.columns
-)
-if _has_amt:
-    brand_in_qty_monitor = count_unique_style_with_amount_by_brand(
-        df_inout_in_base,
-        inout_style_col,
-        _amt_col,
-        min_amount=1,
-    )
-else:
-    brand_in_qty_monitor = count_unique_style_by_brand(
-        df_inout_in_base,
-        inout_style_col,
-    )
+# 스타일수(입고상품 기준): 위쪽 입출고 표와 동일한 brand_in_qty 사용(이미 위에서 입고액≥1 기준으로 계산됨)
 def format_monitor_num(value):
     if value is None or pd.isna(value):
         return "0"
@@ -3764,8 +3767,8 @@ if "스타일수(입고상품 기준)" in monitor_df.columns:
     def resolve_style_count(brand_name):
         if brand_name in bu_labels:
             brands = next((b for l, b in bu_groups if l == brand_name), [])
-            return sum(brand_in_qty_monitor.get(b, 0) for b in brands)
-        return brand_in_qty_monitor.get(brand_name, 0)
+            return sum(brand_in_qty.get(b, 0) for b in brands)
+        return brand_in_qty.get(brand_name, 0)
     style_count_by_brand = {b: resolve_style_count(b) for b in monitor_df["브랜드"]}
     monitor_df["스타일수(입고상품 기준)"] = monitor_df["브랜드"].map(
         lambda b: format_monitor_num(style_count_by_brand.get(b, 0))
@@ -4255,10 +4258,7 @@ brand_order_sku_qty = count_unique_sku_with_amount_by_brand(
     min_amount=1,
 )
 brand_order_amt = sum_by_brand(df_inout_order_base, inout_order_amt_col)
-brand_in_qty = count_unique_style_by_brand(
-    df_inout_in_base,
-    inout_style_col,
-)
+# brand_in_qty는 위쪽에서 입고액≥1 기준으로 이미 계산됨(입출고 표·모니터 표 공통)
 brand_in_sku_qty = count_unique_sku_with_amount_by_brand(
     df_inout_in_base,
     inout_style_col,
