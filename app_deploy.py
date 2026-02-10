@@ -12,7 +12,18 @@ from io import BytesIO
 # 페이지 설정: 대시보드 기본 레이아웃과 사이드바 상태 고정
 st.set_page_config(page_title="온라인 리드타임 대시보드", layout="wide", initial_sidebar_state="expanded")
 
-# 파일 경로: 현재 파일 기준 DB 폴더에서 엑셀 로드(로컬 개발용, 배포 시에는 사이드바 업로드 사용)
+
+
+GOOGLE_SPREADSHEET_IDS = {
+    "inout": BASE_SPREADSHEET_ID,
+    "spao": SP_SPREADSHEET_ID,
+    "whoau": WH_SPREADSHEET_ID,
+    "clavis": CV_SPREADSHEET_ID,
+    "mixxo": MI_SPREADSHEET_ID,
+    "roem": RM_SPREADSHEET_ID,
+}
+
+# 로컬 개발용: DB 폴더 엑셀 경로(배포 시 Google Sheets 사용)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_DIR = os.path.join(BASE_DIR, "DB")
 inout_file_path = os.path.join(DB_DIR, "260202 DB4(1).xlsx")
@@ -27,23 +38,72 @@ whoau_photo_file_path = os.path.join(
 clavis_photo_file_path = os.path.join(
     DB_DIR, "CV온라인 2025년 스타일판_260209(1).xlsx"
 )
-misso_photo_file_path = os.path.join(
+mixxo_photo_file_path = os.path.join(
     DB_DIR, "★★MI온라인 2026년 new스타일판_20260209★★상품팀_(수정)[1].xlsx"
 )
 roem_photo_file_path = os.path.join(
     DB_DIR, "★RM온라인 2026년 스타일판_2026년 2월06일(1).xlsx"
 )
 
-# 배포용: 키별 경로 매핑(로컬 없을 때 업로드로 대체)
-EXCEL_KEYS = ("inout", "spao", "whoau", "clavis", "misso", "roem")
+# 키별 로컬 경로 매핑(Google 사용 불가 시 fallback)
+EXCEL_KEYS = ("inout", "spao", "whoau", "clavis", "mixxo", "roem")
 PATH_MAP = {
     "inout": inout_file_path,
     "spao": spao_register_file_path,
     "whoau": whoau_photo_file_path,
     "clavis": clavis_photo_file_path,
-    "misso": misso_photo_file_path,
+    "mixxo": mixxo_photo_file_path,
     "roem": roem_photo_file_path,
 }
+
+# Google API: 시트를 xlsx로 내보내기 위해 Drive API 사용
+GOOGLE_SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets.readonly",
+    "https://www.googleapis.com/auth/drive.readonly",
+]
+
+
+def _get_google_credentials():
+    """서비스 계정 JSON으로 Credentials 반환. 실패 시 None."""
+    creds_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+    if not creds_path or not os.path.isfile(creds_path):
+        # 프로젝트 루트의 기본 경로 시도
+        for name in ("service_account.json", "credentials.json", "google_credentials.json"):
+            p = os.path.join(BASE_DIR, name)
+            if os.path.isfile(p):
+                creds_path = p
+                break
+        if not creds_path:
+            return None
+    try:
+        return Credentials.from_service_account_file(creds_path, scopes=GOOGLE_SCOPES)
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=300)
+def _fetch_google_sheet_as_xlsx_bytes(spreadsheet_id):
+    """Google 시트를 xlsx 바이트로 내보내기(5분 캐시). 실패 시 None."""
+    creds = _get_google_credentials()
+    if not creds:
+        return None
+    try:
+        from googleapiclient.discovery import build
+        from googleapiclient.http import MediaIoBaseDownload
+        service = build("drive", "v3", credentials=creds, cache_discovery=False)
+        request = service.files().export_media(
+            fileId=spreadsheet_id,
+            mimeType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        fh = BytesIO()
+        downloader = MediaIoBaseDownload(fh, request)
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
+        fh.seek(0)
+        return fh.read()
+    except Exception:
+        return None
 
 # 실행 시각 고정(새로고침 전까지 동일 값 유지)
 update_time = datetime.now()
@@ -52,9 +112,9 @@ update_time = datetime.now()
 def get_excel_sources():
     """
     배포/로컬 공통: 엑셀 소스 확보.
-    - 업로드된 파일이 있으면 메모리에서 바로 읽음: pd.read_excel(uploaded_file) 패턴.
-    - bytes로 저장 후 BytesIO로 감싸 pd.read_excel에 전달(서버 메모리).
-    - 없으면 로컬 경로에서 읽어 bytes로 로드(로컬 개발 시).
+    - 업로드된 파일이 있으면 메모리에서 바로 읽음.
+    - 없으면 Google Sheets(배포용)에서 xlsx로 내보내 읽음.
+    - 그래도 없으면 로컬 경로에서 읽음(로컬 개발 시).
     반환: dict key -> (bytes 또는 None, cache_key 문자열)
     """
     labels = {
@@ -62,11 +122,11 @@ def get_excel_sources():
         "spao": "스파오 상품등록 트래킹판",
         "whoau": "후아유 스타일판 촬영현황",
         "clavis": "클라비스 스타일판",
-        "misso": "미쏘 스타일판",
+        "mixxo": "미쏘 스타일판",
         "roem": "로엠 스타일판",
     }
     st.sidebar.header("데이터 파일")
-    st.sidebar.caption("배포 환경에서는 아래에서 엑셀을 업로드하세요. 로컬에서는 DB 폴더를 사용할 수 있습니다.")
+    st.sidebar.caption("배포 환경: Google 시트 자동 연동. 필요 시 엑셀 업로드로 덮어쓸 수 있습니다.")
     sources = {}
     for key in EXCEL_KEYS:
         uploaded = st.sidebar.file_uploader(
@@ -75,7 +135,6 @@ def get_excel_sources():
             key=f"upload_{key}",
         )
         if uploaded is not None:
-            # 업로드된 엑셀을 그대로 메모리에서 읽음 (pd.read_excel(uploaded_file) 패턴)
             raw = uploaded.read()
             st.session_state[f"excel_bytes_{key}"] = raw
             st.session_state[f"excel_cache_key_{key}"] = hashlib.sha256(raw).hexdigest()
@@ -84,11 +143,18 @@ def get_excel_sources():
         if bytes_val is not None and cache_key is not None:
             sources[key] = (bytes_val, cache_key)
         else:
+            # Google Sheets에서 xlsx로 내보내 시도(배포용)
+            sheet_id = GOOGLE_SPREADSHEET_IDS.get(key)
+            if sheet_id:
+                raw = _fetch_google_sheet_as_xlsx_bytes(sheet_id)
+                if raw:
+                    sources[key] = (raw, f"gs:{sheet_id}")
+                    continue
+            # 로컬 경로 fallback
             path = PATH_MAP.get(key)
             if path and os.path.exists(path):
                 try:
                     import sys
-                    # .xls 변환은 Windows 로컬에서만(배포 서버에는 Excel COM 없음)
                     if sys.platform == "win32" and not is_zip_xlsx(path):
                         resolved = ensure_xlsx_path(path)
                     else:
@@ -617,10 +683,10 @@ def _clavis_bytes(io_bytes):
     with open(path, "rb") as f:
         return f.read()
 
-def _misso_bytes(io_bytes):
+def _mixxo_bytes(io_bytes):
     if io_bytes is not None and len(io_bytes) > 0:
         return io_bytes
-    path = ensure_xlsx_path(misso_photo_file_path) if os.path.exists(misso_photo_file_path) else None
+    path = ensure_xlsx_path(mixxo_photo_file_path) if os.path.exists(mixxo_photo_file_path) else None
     if not path or not os.path.exists(path):
         return None
     with open(path, "rb") as f:
@@ -1342,15 +1408,15 @@ def load_clavis_unregistered_online_count(io_bytes=None, _cache_key=None):
     return int((valid & style_ok & clavis_mask).sum())
 
 @st.cache_data
-def load_misso_metric_days(target_keywords, io_bytes=None, _cache_key=None):
+def load_mixxo_metric_days(target_keywords, io_bytes=None, _cache_key=None):
     # 미쏘 트래킹판에서 특정 소요일 컬럼 평균 산출
     if _cache_key is None:
-        _cache_key = "misso_metric_default"
-    misso_bytes = _misso_bytes(io_bytes)
-    if misso_bytes is None:
+        _cache_key = "mixxo_metric_default"
+    mixxo_bytes = _mixxo_bytes(io_bytes)
+    if mixxo_bytes is None:
         return None
     try:
-        excel_file = pd.ExcelFile(BytesIO(misso_bytes))
+        excel_file = pd.ExcelFile(BytesIO(mixxo_bytes))
     except Exception:
         return None
     best_sheet = None
@@ -1364,7 +1430,7 @@ def load_misso_metric_days(target_keywords, io_bytes=None, _cache_key=None):
     normalized_keywords = ["".join(str(k).split()) for k in target_keywords]
     for sheet_name in excel_file.sheet_names:
         try:
-            df_raw_sheet = pd.read_excel(BytesIO(misso_bytes), sheet_name=sheet_name, header=None)
+            df_raw_sheet = pd.read_excel(BytesIO(mixxo_bytes), sheet_name=sheet_name, header=None)
         except Exception:
             continue
         if df_raw_sheet.empty:
@@ -1404,15 +1470,15 @@ def load_misso_metric_days(target_keywords, io_bytes=None, _cache_key=None):
     return float(mean_val), int(values.count()), header_cell
 
 @st.cache_data
-def load_misso_registered_style_count(io_bytes=None, _cache_key=None):
+def load_mixxo_registered_style_count(io_bytes=None, _cache_key=None):
     # 미쏘 트래킹판에서 스타일코드 + 공홈등록일 모두 있는 행 카운트 (메모리에서 읽음)
     if _cache_key is None:
-        _cache_key = "misso_reg_count_default"
-    misso_bytes = _misso_bytes(io_bytes)
-    if misso_bytes is None:
+        _cache_key = "mixxo_reg_count_default"
+    mixxo_bytes = _mixxo_bytes(io_bytes)
+    if mixxo_bytes is None:
         return 0
     try:
-        excel_file = pd.ExcelFile(BytesIO(misso_bytes))
+        excel_file = pd.ExcelFile(BytesIO(mixxo_bytes))
     except Exception:
         return 0
 
@@ -1421,7 +1487,7 @@ def load_misso_registered_style_count(io_bytes=None, _cache_key=None):
 
     for sheet_name in excel_file.sheet_names:
         try:
-            df_raw = pd.read_excel(BytesIO(misso_bytes), sheet_name=sheet_name, header=None)
+            df_raw = pd.read_excel(BytesIO(mixxo_bytes), sheet_name=sheet_name, header=None)
         except Exception:
             continue
         if df_raw is None or df_raw.empty:
@@ -1466,13 +1532,13 @@ def load_misso_registered_style_count(io_bytes=None, _cache_key=None):
     return 0
 
 @st.cache_data
-def load_misso_register_avg_days(io_bytes=None, _cache_key=None):
+def load_mixxo_register_avg_days(io_bytes=None, _cache_key=None):
     # 미쏘 등록 평균 소요일 계산 (메모리에서 읽음):
     # 공홈등록일 - 기준일(스튜디오 전표일자 우선, 없으면 포토인계일) 평균
     if _cache_key is None:
-        _cache_key = "misso_avg_days_default"
-    misso_bytes = _misso_bytes(io_bytes)
-    if misso_bytes is None:
+        _cache_key = "mixxo_avg_days_default"
+    mixxo_bytes = _mixxo_bytes(io_bytes)
+    if mixxo_bytes is None:
         return None
     def normalize_header_text(value):
         return "".join(str(value).split())
@@ -1516,13 +1582,13 @@ def load_misso_register_avg_days(io_bytes=None, _cache_key=None):
     best_start_row = None
 
     try:
-        excel_file = pd.ExcelFile(BytesIO(misso_bytes))
+        excel_file = pd.ExcelFile(BytesIO(mixxo_bytes))
     except Exception:
         return None
 
     for sheet_name in excel_file.sheet_names:
         try:
-            preview = pd.read_excel(BytesIO(misso_bytes), sheet_name=sheet_name, header=None)
+            preview = pd.read_excel(BytesIO(mixxo_bytes), sheet_name=sheet_name, header=None)
         except Exception:
             continue
         if preview is None or preview.empty:
@@ -1548,7 +1614,7 @@ def load_misso_register_avg_days(io_bytes=None, _cache_key=None):
         return None
 
     try:
-        df_raw = pd.read_excel(BytesIO(misso_bytes), sheet_name=best_sheet, header=None)
+        df_raw = pd.read_excel(BytesIO(mixxo_bytes), sheet_name=best_sheet, header=None)
     except Exception:
         return None
     if df_raw is None or df_raw.empty:
@@ -1602,15 +1668,15 @@ def load_misso_register_avg_days(io_bytes=None, _cache_key=None):
     return float(sum(diffs)) / len(diffs)
 
 @st.cache_data
-def load_misso_unregistered_online_count(io_bytes=None, _cache_key=None):
+def load_mixxo_unregistered_online_count(io_bytes=None, _cache_key=None):
     # 미쏘: 상품등록일 비어있고 리터칭완료일이 2020년 이후인 행 수
     if _cache_key is None:
-        _cache_key = "misso_unreg_default"
-    misso_bytes = _misso_bytes(io_bytes)
-    if misso_bytes is None:
+        _cache_key = "mixxo_unreg_default"
+    mixxo_bytes = _mixxo_bytes(io_bytes)
+    if mixxo_bytes is None:
         return 0
     try:
-        excel_file = pd.ExcelFile(BytesIO(misso_bytes))
+        excel_file = pd.ExcelFile(BytesIO(mixxo_bytes))
     except Exception:
         return 0
 
@@ -1649,7 +1715,7 @@ def load_misso_unregistered_online_count(io_bytes=None, _cache_key=None):
 
     for sheet_name in excel_file.sheet_names:
         try:
-            preview = pd.read_excel(BytesIO(misso_bytes), sheet_name=sheet_name, header=None)
+            preview = pd.read_excel(BytesIO(mixxo_bytes), sheet_name=sheet_name, header=None)
         except Exception:
             continue
         if preview is None or preview.empty:
@@ -1695,7 +1761,7 @@ def load_misso_unregistered_online_count(io_bytes=None, _cache_key=None):
         return 0
 
     try:
-        df_raw = pd.read_excel(BytesIO(misso_bytes), sheet_name=best_sheet, header=None)
+        df_raw = pd.read_excel(BytesIO(mixxo_bytes), sheet_name=best_sheet, header=None)
     except Exception:
         return 0
     if df_raw is None or df_raw.empty:
@@ -1727,8 +1793,8 @@ def load_misso_unregistered_online_count(io_bytes=None, _cache_key=None):
     style_text = style_series.astype(str).str.strip()
     style_ok = style_text.replace(r"^\s*$", pd.NA, regex=True).notna()
     # 미쏘 스타일코드(MI 시작)만 집계
-    misso_mask = style_text.str.upper().str.startswith("MI", na=False)
-    return int((valid & style_ok & misso_mask).sum())
+    mixxo_mask = style_text.str.upper().str.startswith("MI", na=False)
+    return int((valid & style_ok & mixxo_mask).sum())
 
 @st.cache_data
 def load_roem_metric_days(target_keywords, io_bytes=None, _cache_key=None):
@@ -2552,30 +2618,30 @@ clavis_register_header_cell = clavis_register_days_result[2] if clavis_register_
 clavis_register_style_count = 103
 clavis_register_avg_days = load_clavis_register_avg_days(_clavis_src[0], _cache_key=_clavis_src[1])
 clavis_unregistered_online_count = load_clavis_unregistered_online_count(_clavis_src[0], _cache_key=_clavis_src[1])
-_misso_src = _sources.get("misso", (None, None))
-misso_handover_result = load_misso_metric_days(
+_mixxo_src = _sources.get("mixxo", (None, None))
+mixxo_handover_result = load_mixxo_metric_days(
     ["포토팀상품인계", "포토팀 상품인계", "상품인계소요일", "상품인계 소요일", "포토인계소요일", "포토 인계 소요일"],
-    _misso_src[0], _cache_key=_misso_src[1]
+    _mixxo_src[0], _cache_key=_mixxo_src[1]
 )
-misso_handover_days = misso_handover_result[0] if misso_handover_result else None
-misso_handover_count = misso_handover_result[1] if misso_handover_result else 0
-misso_handover_header_cell = misso_handover_result[2] if misso_handover_result else None
-misso_shooting_result = load_misso_metric_days(["촬영소요일", "촬영 소요일", "촬영기간"], _misso_src[0], _cache_key=_misso_src[1])
-misso_shooting_days = misso_shooting_result[0] if misso_shooting_result else None
-misso_shooting_count = misso_shooting_result[1] if misso_shooting_result else 0
-misso_shooting_header_cell = misso_shooting_result[2] if misso_shooting_result else None
-misso_register_days_result = load_misso_metric_days(
+mixxo_handover_days = mixxo_handover_result[0] if mixxo_handover_result else None
+mixxo_handover_count = mixxo_handover_result[1] if mixxo_handover_result else 0
+mixxo_handover_header_cell = mixxo_handover_result[2] if mixxo_handover_result else None
+mixxo_shooting_result = load_mixxo_metric_days(["촬영소요일", "촬영 소요일", "촬영기간"], _mixxo_src[0], _cache_key=_mixxo_src[1])
+mixxo_shooting_days = mixxo_shooting_result[0] if mixxo_shooting_result else None
+mixxo_shooting_count = mixxo_shooting_result[1] if mixxo_shooting_result else 0
+mixxo_shooting_header_cell = mixxo_shooting_result[2] if mixxo_shooting_result else None
+mixxo_register_days_result = load_mixxo_metric_days(
     ["상품등록소요일", "상품등록 소요일", "공홈등록소요일", "공홈등록 소요일", "등록소요일", "등록 소요일"],
-    _misso_src[0], _cache_key=_misso_src[1]
+    _mixxo_src[0], _cache_key=_mixxo_src[1]
 )
-misso_register_days = misso_register_days_result[0] if misso_register_days_result else None
-misso_register_count = misso_register_days_result[1] if misso_register_days_result else 0
-misso_register_header_cell = misso_register_days_result[2] if misso_register_days_result else None
-misso_register_style_count = load_misso_registered_style_count(_misso_src[0], _cache_key=_misso_src[1])
-misso_register_avg_days = load_misso_register_avg_days(_misso_src[0], _cache_key=_misso_src[1])
-if misso_register_avg_days is None:
-    misso_register_avg_days = 4.1
-misso_unregistered_online_count = load_misso_unregistered_online_count(_misso_src[0], _cache_key=_misso_src[1])
+mixxo_register_days = mixxo_register_days_result[0] if mixxo_register_days_result else None
+mixxo_register_count = mixxo_register_days_result[1] if mixxo_register_days_result else 0
+mixxo_register_header_cell = mixxo_register_days_result[2] if mixxo_register_days_result else None
+mixxo_register_style_count = load_mixxo_registered_style_count(_mixxo_src[0], _cache_key=_mixxo_src[1])
+mixxo_register_avg_days = load_mixxo_register_avg_days(_mixxo_src[0], _cache_key=_mixxo_src[1])
+if mixxo_register_avg_days is None:
+    mixxo_register_avg_days = 4.1
+mixxo_unregistered_online_count = load_mixxo_unregistered_online_count(_mixxo_src[0], _cache_key=_mixxo_src[1])
 _roem_src = _sources.get("roem", (None, None))
 roem_handover_result = load_roem_metric_days(
     ["포토팀상품인계", "포토팀 상품인계", "상품인계소요일", "상품인계 소요일", "포토인계소요일", "포토 인계 소요일"],
@@ -3309,14 +3375,14 @@ if selected_brand == "클라비스":
         display_days[1] = round(clavis_shooting_days, 1)
     display_days[2] = 0.0
 if selected_brand == "미쏘":
-    if misso_handover_days is not None:
-        display_days[0] = round(misso_handover_days, 1)
-    if misso_shooting_days is not None:
-        display_days[1] = round(misso_shooting_days, 1)
-    if misso_register_avg_days is not None:
-        display_days[2] = round(misso_register_avg_days, 1)
-    elif misso_register_days is not None:
-        display_days[2] = round(misso_register_days, 1)
+    if mixxo_handover_days is not None:
+        display_days[0] = round(mixxo_handover_days, 1)
+    if mixxo_shooting_days is not None:
+        display_days[1] = round(mixxo_shooting_days, 1)
+    if mixxo_register_avg_days is not None:
+        display_days[2] = round(mixxo_register_avg_days, 1)
+    elif mixxo_register_days is not None:
+        display_days[2] = round(mixxo_register_days, 1)
 if selected_brand == "로엠":
     if roem_handover_days is not None:
         display_days[0] = round(roem_handover_days, 1)
@@ -3398,20 +3464,20 @@ if selected_brand == "클라비스" and clavis_register_header_cell:
         f"상품등록 소요일 위치: {clavis_register_header_cell} · "
         f"숫자 {clavis_register_count}개 평균"
     )
-if selected_brand == "미쏘" and misso_handover_header_cell:
+if selected_brand == "미쏘" and mixxo_handover_header_cell:
     st.caption(
-        f"포토팀 상품인계 위치: {misso_handover_header_cell} · "
-        f"숫자 {misso_handover_count}개 평균"
+        f"포토팀 상품인계 위치: {mixxo_handover_header_cell} · "
+        f"숫자 {mixxo_handover_count}개 평균"
     )
-if selected_brand == "미쏘" and misso_shooting_header_cell:
+if selected_brand == "미쏘" and mixxo_shooting_header_cell:
     st.caption(
-        f"촬영 소요일 위치: {misso_shooting_header_cell} · "
-        f"숫자 {misso_shooting_count}개 평균"
+        f"촬영 소요일 위치: {mixxo_shooting_header_cell} · "
+        f"숫자 {mixxo_shooting_count}개 평균"
     )
-if selected_brand == "미쏘" and misso_register_header_cell:
+if selected_brand == "미쏘" and mixxo_register_header_cell:
     st.caption(
-        f"상품등록 소요일 위치: {misso_register_header_cell} · "
-        f"숫자 {misso_register_count}개 평균"
+        f"상품등록 소요일 위치: {mixxo_register_header_cell} · "
+        f"숫자 {mixxo_register_count}개 평균"
     )
 if selected_brand == "로엠" and roem_handover_header_cell:
     st.caption(
@@ -3538,8 +3604,8 @@ if "온라인 등록 스타일수" in monitor_df.columns:
         register_style_counts["후아유"] = whoau_register_style_count
     if clavis_register_style_count is not None:
         register_style_counts["클라비스"] = clavis_register_style_count
-    if misso_register_style_count is not None:
-        register_style_counts["미쏘"] = misso_register_style_count
+    if mixxo_register_style_count is not None:
+        register_style_counts["미쏘"] = mixxo_register_style_count
     if roem_register_style_count is not None:
         register_style_counts["로엠"] = roem_register_style_count
     def has_online_register_data(brand_name):
@@ -3576,7 +3642,7 @@ if "상품 미등록(온라인)" in monitor_df.columns:
         "후아유": whoau_unregistered_online_count,
         "스파오": spao_unregistered_online_count,
         "클라비스": clavis_unregistered_online_count,
-        "미쏘": misso_unregistered_online_count,
+        "미쏘": mixxo_unregistered_online_count,
         "로엠": roem_unregistered_online_count,
     }
     def format_dash_if_no_register(brand_name, value):
@@ -3624,8 +3690,8 @@ if "평균 등록 소요일수" in monitor_df.columns:
         avg_days_by_brand["후아유"] = whoau_register_avg_days
     if clavis_register_avg_days is not None:
         avg_days_by_brand["클라비스"] = clavis_register_avg_days
-    if misso_register_avg_days is not None:
-        avg_days_by_brand["미쏘"] = misso_register_avg_days
+    if mixxo_register_avg_days is not None:
+        avg_days_by_brand["미쏘"] = mixxo_register_avg_days
     if roem_register_avg_days is not None:
         avg_days_by_brand["로엠"] = roem_register_avg_days
     def resolve_avg_days(brand_name):
