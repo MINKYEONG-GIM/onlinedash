@@ -3171,8 +3171,9 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# 데이터 연결 상태 (구글 시트 연동 확인용)
+# 데이터 연결 상태 (구글 시트 연동 확인용) — 텍스트 흰색으로 표시
 _source_labels = {"inout": "입출고 DB", "spao": "스파오 트래킹", "whoau": "후아유 스타일판", "clavis": "클라비스 스타일판", "mixxo": "미쏘 스타일판", "roem": "로엠 스타일판"}
+_conn_style = "color: #f8fafc !important;"
 with st.expander("📊 데이터 연결 상태", expanded=True):
     has_any = any(_sources.get(k, (None, None))[0] for k in EXCEL_KEYS)
     for key in EXCEL_KEYS:
@@ -3180,21 +3181,21 @@ with st.expander("📊 데이터 연결 상태", expanded=True):
         if raw and len(raw) > 0:
             size_kb = len(raw) / 1024
             if ck.startswith("gs:"):
-                st.caption(f"**{_source_labels.get(key, key)}**: ✅ Google 시트 연결됨 ({size_kb:.1f} KB)")
+                st.markdown(f'<p style="{_conn_style}"><strong>{_source_labels.get(key, key)}</strong>: ✅ Google 시트 연결됨 ({size_kb:.1f} KB)</p>', unsafe_allow_html=True)
             else:
-                st.caption(f"**{_source_labels.get(key, key)}**: ✅ 로컬 파일 ({size_kb:.1f} KB)")
+                st.markdown(f'<p style="{_conn_style}"><strong>{_source_labels.get(key, key)}</strong>: ✅ 로컬 파일 ({size_kb:.1f} KB)</p>', unsafe_allow_html=True)
         else:
-            st.caption(f"**{_source_labels.get(key, key)}**: ❌ 데이터 없음 (Secrets·공유 확인)")
+            st.markdown(f'<p style="{_conn_style}"><strong>{_source_labels.get(key, key)}</strong>: ❌ 데이터 없음 (Secrets·공유 확인)</p>', unsafe_allow_html=True)
     if df_inout is not None and not df_inout.empty:
-        st.caption(f"입출고 데이터: **{len(df_inout)}**행 × **{len(df_inout.columns)}**열 | 컬럼 예: {list(df_inout.columns[:8])}")
+        st.markdown(f'<p style="{_conn_style}">입출고 데이터: <strong>{len(df_inout)}</strong>행 × <strong>{len(df_inout.columns)}</strong>열 | 컬럼 예: {list(df_inout.columns[:8])}</p>', unsafe_allow_html=True)
     else:
-        st.caption("입출고 데이터: **0행** — 입출고 DB 시트가 비었거나 연결되지 않았습니다.")
+        st.markdown(f'<p style="{_conn_style}">입출고 데이터: <strong>0행</strong> — 입출고 DB 시트가 비었거나 연결되지 않았습니다.</p>', unsafe_allow_html=True)
     if not has_any:
-        st.markdown("---")
-        st.markdown("**🔧 연결이 안 될 때:** Streamlit **Manage app → Secrets**에 다음을 확인하세요.")
-        st.markdown("1. **서비스 계정**: `[google_service_account]` 섹션에 type, project_id, private_key_id, private_key, client_email 등 입력")
-        st.markdown("2. **스프레드시트 ID**: BASE_SPREADSHEET_ID, SP_SPREADSHEET_ID, MI_SPREADSHEET_ID, CV_SPREADSHEET_ID, WH_SPREADSHEET_ID, RM_SPREADSHEET_ID")
-        st.markdown("3. **시트 공유**: 위 6개 Google 시트를 서비스 계정 이메일(client_email)과 **편집 권한**으로 공유")
+        st.markdown(f'<hr style="border-color: #475569;">', unsafe_allow_html=True)
+        st.markdown(f'<p style="{_conn_style}"><strong>🔧 연결이 안 될 때:</strong> Streamlit <strong>Manage app → Secrets</strong>에 다음을 확인하세요.</p>', unsafe_allow_html=True)
+        st.markdown(f'<p style="{_conn_style}">1. <strong>서비스 계정:</strong> <code>[google_service_account]</code> 섹션에 type, project_id, private_key_id, private_key, client_email 등 입력</p>', unsafe_allow_html=True)
+        st.markdown(f'<p style="{_conn_style}">2. <strong>스프레드시트 ID:</strong> BASE_SPREADSHEET_ID, SP_SPREADSHEET_ID, MI_SPREADSHEET_ID, CV_SPREADSHEET_ID, WH_SPREADSHEET_ID, RM_SPREADSHEET_ID</p>', unsafe_allow_html=True)
+        st.markdown(f'<p style="{_conn_style}">3. <strong>시트 공유:</strong> 위 6개 Google 시트를 서비스 계정 이메일(client_email)과 <strong>편집 권한</strong>으로 공유</p>', unsafe_allow_html=True)
 
 # 상단: 제목/업데이트(좌) + 연도/시즌/브랜드/QR 토글(우)
 col_head_left, col_head_right = st.columns([2, 3])
