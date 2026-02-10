@@ -3,15 +3,20 @@ import streamlit as st
 import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
-import os
-import html as html_lib
 from datetime import datetime
-from io import BytesIO
 
-# 페이지 설정: 대시보드 기본 레이아웃과 사이드바 상태 고정
-st.set_page_config(page_title="온라인 리드타임 대시보드", layout="wide", initial_sidebar_state="expanded")
+# =====================================================
+# 페이지 설정
+# =====================================================
+st.set_page_config(
+    page_title="온라인 리드타임 대시보드",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-# Google Sheets 스프레드시트 ID → Streamlit Secrets에서 로드 (보안, 없으면 빈 문자열로 NameError 방지)
+# =====================================================
+# Secrets 안전 로드
+# =====================================================
 def _secret(key, default=""):
     try:
         return st.secrets.get(key, default) or default
@@ -19,20 +24,125 @@ def _secret(key, default=""):
         return default
 
 BASE_SPREADSHEET_ID = _secret("BASE_SPREADSHEET_ID")
-SP_SPREADSHEET_ID = _secret("SP_SPREADSHEET_ID")
-MI_SPREADSHEET_ID = _secret("MI_SPREADSHEET_ID")
-CV_SPREADSHEET_ID = _secret("CV_SPREADSHEET_ID")
-WH_SPREADSHEET_ID = _secret("WH_SPREADSHEET_ID")
-RM_SPREADSHEET_ID = _secret("RM_SPREADSHEET_ID")
+SP_SPREADSHEET_ID   = _secret("SP_SPREADSHEET_ID")
+WH_SPREADSHEET_ID   = _secret("WH_SPREADSHEET_ID")
+CV_SPREADSHEET_ID   = _secret("CV_SPREADSHEET_ID")
+MI_SPREADSHEET_ID   = _secret("MI_SPREADSHEET_ID")
+RM_SPREADSHEET_ID   = _secret("RM_SPREADSHEET_ID")
 
-GOOGLE_SPREADSHEET_IDS = {
-    "inout": BASE_SPREADSHEET_ID,
-    "spao": SP_SPREADSHEET_ID,
-    "whoau": WH_SPREADSHEET_ID,
-    "clavis": CV_SPREADSHEET_ID,
-    "mixxo": MI_SPREADSHEET_ID,
-    "roem": RM_SPREADSHEET_ID,
-}
+# =====================================================
+# Google Credentials
+# =====================================================
+def get_google_credentials():
+    try:
+        info = dict(st.secrets["google_service_account"])
+        return Credentials.from_service_account_info(
+            info,
+            scopes=["https://www.googleapis.com/auth/spreadsheets.readonly"]
+        )
+    except Exception:
+        return None
+
+# =====================================================
+# Google Sheet → DataFrame (핵심 함수)
+# =====================================================
+@st.cache_data(ttl=300)
+def fetch_gsheet_as_df(spreadsheet_id, worksheet_index=0):
+    creds = get_google_credentials()
+    if not creds or not spreadsheet_id:
+        return pd.DataFrame()
+
+    try:
+        gc = gspread.authorize(creds)
+        sh = gc.open_by_key(spreadsheet_id)
+        ws = sh.get_worksheet(worksheet_index)
+
+        rows = ws.get_all_values()
+        if not rows or len(rows) < 2:
+            return pd.DataFrame()
+
+        header = rows[0]
+        data = rows[1:]
+
+        df = pd.DataFrame(data, columns=header)
+        df.columns = [str(c).strip() for c in df.columns]
+        return df
+
+    except Exception:
+        return pd.DataFrame()
+
+# =====================================================
+# 컬럼 자동 탐색
+# =====================================================
+def find_col(keys, df):
+    for k in keys:
+        for c in df.columns:
+            if k == str(c).strip():
+                return c
+    for k in keys:
+        for c in df.columns:
+            if k in str(c):
+                return c
+    return None
+
+# =====================================================
+# 입출고 데이터 처리 예시
+# =====================================================
+def process_inout_df(df):
+    if df.empty:
+        return df
+
+    date_col = find_col(["최종출고일", "출고일"], df)
+    brand_col = find_col(["브랜드"], df)
+
+    if date_col:
+        df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
+
+    return df
+
+# =====================================================
+# UI
+# =====================================================
+st.title("온라인 리드타임 대시보드")
+st.caption(f"업데이트 시각: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+# =====================================================
+# 데이터 로드
+# =====================================================
+with st.spinner("Google Sheets에서 데이터 불러오는 중..."):
+    df_inout = fetch_gsheet_as_df(BASE_SPREADSHEET_ID)
+    df_spao  = fetch_gsheet_as_df(SP_SPREADSHEET_ID)
+    df_wh    = fetch_gsheet_as_df(WH_SPREADSHEET_ID)
+    df_cv    = fetch_gsheet_as_df(CV_SPREADSHEET_ID)
+    df_mi    = fetch_gsheet_as_df(MI_SPREADSHEET_ID)
+    df_rm    = fetch_gsheet_as_df(RM_SPREADSHEET_ID)
+
+# =====================================================
+# 상태 표시
+# =====================================================
+def status(label, df):
+    if df.empty:
+        st.error(f"{label}: ❌ 데이터 없음")
+    else:
+        st.success(f"{label}: ✅ {len(df)}행")
+
+status("입출고 DB", df_inout)
+status("스파오 트래킹", df_spao)
+status("후아유 스타일판", df_wh)
+status("클라비스 스타일판", df_cv)
+status("미쏘 스타일판", df_mi)
+status("로엠 스타일판", df_rm)
+
+# =====================================================
+# 입출고 미리보기
+# =====================================================
+st.subheader("입출고 데이터 미리보기")
+if df_inout.empty:
+    st.warning("입출고 데이터가 없습니다.")
+else:
+    df_inout = process_inout_df(df_inout)
+    st.dataframe(df_inout.head(50), use_container_width=True)
+
 
 # 로컬 개발용: DB 폴더 엑셀 경로(배포 시 Google Sheets 사용)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
