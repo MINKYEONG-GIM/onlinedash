@@ -3696,10 +3696,26 @@ monitor_columns = [
     "포토 미업로드(포토팀)",
     "상품 미등록(온라인)",
 ]
-brand_in_qty_monitor = count_unique_style_by_brand(
-    df_inout_in_base,
-    inout_style_col,
+# 상단 입출고 표/KPI와 동일: "입고상품 기준" = 실제 입고액이 1 이상인 스타일만 카운트
+_amt_col = inout_cum_in_amt_col or inout_in_amt_col
+_has_amt = (
+    df_inout_in_base is not None
+    and not df_inout_in_base.empty
+    and _amt_col
+    and _amt_col in df_inout_in_base.columns
 )
+if _has_amt:
+    brand_in_qty_monitor = count_unique_style_with_amount_by_brand(
+        df_inout_in_base,
+        inout_style_col,
+        _amt_col,
+        min_amount=1,
+    )
+else:
+    brand_in_qty_monitor = count_unique_style_by_brand(
+        df_inout_in_base,
+        inout_style_col,
+    )
 def format_monitor_num(value):
     if value is None or pd.isna(value):
         return "0"
