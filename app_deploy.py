@@ -93,8 +93,10 @@ def _get_google_credentials():
 
 
 @st.cache_data(ttl=300)
-def _fetch_google_sheet_as_xlsx_bytes(spreadsheet_id):
-    """Google 시트를 xlsx 바이트로 내보내기(5분 캐시). 실패 시 None."""
+def _fetch_google_sheet_as_xlsx_bytes(spreadsheet_id, _creds_ok=True):
+    """Google 시트를 xlsx 바이트로 내보내기(5분 캐시). _creds_ok=False면 캐시 키만 달라져 실패 후 재시도 가능."""
+    if not spreadsheet_id or not _creds_ok:
+        return None
     creds = _get_google_credentials()
     if not creds:
         return None
@@ -125,11 +127,12 @@ def get_excel_sources():
     Google Sheets(또는 로컬 경로)에서만 데이터 소스 확보. 업로드 UI 없음.
     반환: dict key -> (bytes 또는 None, cache_key 문자열)
     """
+    creds_ok = _get_google_credentials() is not None
     sources = {}
     for key in EXCEL_KEYS:
         sheet_id = GOOGLE_SPREADSHEET_IDS.get(key)
         if sheet_id:
-            raw = _fetch_google_sheet_as_xlsx_bytes(sheet_id)
+            raw = _fetch_google_sheet_as_xlsx_bytes(sheet_id, _creds_ok=creds_ok)
             if raw:
                 sources[key] = (raw, f"gs:{sheet_id}")
                 continue
@@ -3149,6 +3152,24 @@ st.markdown("""
     .stCaption { color: #94a3b8 !important; }
 </style>
 """, unsafe_allow_html=True)
+
+# 데이터 연결 상태 (구글 시트 연동 확인용)
+_source_labels = {"inout": "입출고 DB", "spao": "스파오 트래킹", "whoau": "후아유 스타일판", "clavis": "클라비스 스타일판", "mixxo": "미쏘 스타일판", "roem": "로엠 스타일판"}
+with st.expander("📊 데이터 연결 상태", expanded=False):
+    for key in EXCEL_KEYS:
+        raw, ck = _sources.get(key, (None, "none"))
+        if raw and len(raw) > 0:
+            size_kb = len(raw) / 1024
+            if ck.startswith("gs:"):
+                st.caption(f"**{_source_labels.get(key, key)}**: ✅ Google 시트 연결됨 ({size_kb:.1f} KB)")
+            else:
+                st.caption(f"**{_source_labels.get(key, key)}**: ✅ 로컬 파일 ({size_kb:.1f} KB)")
+        else:
+            st.caption(f"**{_source_labels.get(key, key)}**: ❌ 데이터 없음 (Secrets·공유 확인)")
+    if df_inout is not None and not df_inout.empty:
+        st.caption(f"입출고 데이터: **{len(df_inout)}**행 × **{len(df_inout.columns)}**열 | 컬럼 예: {list(df_inout.columns[:8])}")
+    else:
+        st.caption("입출고 데이터: **0행** — 입출고 DB 시트가 비었거나 연결되지 않았습니다.")
 
 # 상단: 제목/업데이트(좌) + 연도/시즌/브랜드/QR 토글(우)
 col_head_left, col_head_right = st.columns([2, 3])
