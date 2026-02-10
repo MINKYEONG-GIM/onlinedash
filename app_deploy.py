@@ -4,7 +4,6 @@ import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
 import os
-import hashlib
 import html as html_lib
 from datetime import datetime
 from io import BytesIO
@@ -123,65 +122,36 @@ update_time = datetime.now()
 
 def get_excel_sources():
     """
-    배포/로컬 공통: 엑셀 소스 확보.
-    - 업로드된 파일이 있으면 메모리에서 바로 읽음.
-    - 없으면 Google Sheets(배포용)에서 xlsx로 내보내 읽음.
-    - 그래도 없으면 로컬 경로에서 읽음(로컬 개발 시).
+    Google Sheets(또는 로컬 경로)에서만 데이터 소스 확보. 업로드 UI 없음.
     반환: dict key -> (bytes 또는 None, cache_key 문자열)
     """
-    labels = {
-        "inout": "입출고 DB (260202 DB 등)",
-        "spao": "스파오 상품등록 트래킹판",
-        "whoau": "후아유 스타일판 촬영현황",
-        "clavis": "클라비스 스타일판",
-        "mixxo": "미쏘 스타일판",
-        "roem": "로엠 스타일판",
-    }
-    st.sidebar.header("데이터 파일")
-    st.sidebar.caption("배포 환경: Google 시트 자동 연동. 필요 시 엑셀 업로드로 덮어쓸 수 있습니다.")
     sources = {}
     for key in EXCEL_KEYS:
-        uploaded = st.sidebar.file_uploader(
-            labels[key],
-            type=["xlsx", "xls"],
-            key=f"upload_{key}",
-        )
-        if uploaded is not None:
-            raw = uploaded.read()
-            st.session_state[f"excel_bytes_{key}"] = raw
-            st.session_state[f"excel_cache_key_{key}"] = hashlib.sha256(raw).hexdigest()
-        bytes_val = st.session_state.get(f"excel_bytes_{key}")
-        cache_key = st.session_state.get(f"excel_cache_key_{key}")
-        if bytes_val is not None and cache_key is not None:
-            sources[key] = (bytes_val, cache_key)
-        else:
-            # Google Sheets에서 xlsx로 내보내 시도(배포용)
-            sheet_id = GOOGLE_SPREADSHEET_IDS.get(key)
-            if sheet_id:
-                raw = _fetch_google_sheet_as_xlsx_bytes(sheet_id)
-                if raw:
-                    sources[key] = (raw, f"gs:{sheet_id}")
-                    continue
-            # 로컬 경로 fallback
-            path = PATH_MAP.get(key)
-            if path and os.path.exists(path):
-                try:
-                    import sys
-                    if sys.platform == "win32" and not is_zip_xlsx(path):
-                        resolved = ensure_xlsx_path(path)
-                    else:
-                        resolved = path
-                    if resolved and os.path.exists(resolved):
-                        with open(resolved, "rb") as f:
-                            raw = f.read()
-                        ck = f"path:{resolved}|{os.path.getmtime(resolved)}"
-                        sources[key] = (raw, ck)
-                    else:
-                        sources[key] = (None, "none")
-                except Exception:
+        sheet_id = GOOGLE_SPREADSHEET_IDS.get(key)
+        if sheet_id:
+            raw = _fetch_google_sheet_as_xlsx_bytes(sheet_id)
+            if raw:
+                sources[key] = (raw, f"gs:{sheet_id}")
+                continue
+        path = PATH_MAP.get(key)
+        if path and os.path.exists(path):
+            try:
+                import sys
+                if sys.platform == "win32" and not is_zip_xlsx(path):
+                    resolved = ensure_xlsx_path(path)
+                else:
+                    resolved = path
+                if resolved and os.path.exists(resolved):
+                    with open(resolved, "rb") as f:
+                        raw = f.read()
+                    ck = f"path:{resolved}|{os.path.getmtime(resolved)}"
+                    sources[key] = (raw, ck)
+                else:
                     sources[key] = (None, "none")
-            else:
+            except Exception:
                 sources[key] = (None, "none")
+        else:
+            sources[key] = (None, "none")
     return sources
 
 
