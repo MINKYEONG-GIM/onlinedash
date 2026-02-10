@@ -77,11 +77,14 @@ GOOGLE_SCOPES = [
 def _get_google_credentials():
     """서비스 계정 Credentials 반환. Streamlit Secrets 우선, 없으면 로컬 JSON 파일."""
     import json
-    # 1) Streamlit Secrets (배포 시 필수): GCP_SERVICE_ACCOUNT 에 JSON 문자열 또는 dict
+    # 1) Streamlit Secrets: [google_service_account] 섹션 또는 GCP_SERVICE_ACCOUNT 문자열
     try:
-        raw = _secret("GCP_SERVICE_ACCOUNT")
-        if not raw and hasattr(st.secrets, "get"):
-            raw = st.secrets.get("gcp_service_account") or st.secrets.get("GCP_SERVICE_ACCOUNT")
+        raw = None
+        if hasattr(st.secrets, "get"):
+            # TOML [google_service_account] 섹션 (배포 시 권장)
+            raw = st.secrets.get("google_service_account") or st.secrets.get("gcp_service_account") or st.secrets.get("GCP_SERVICE_ACCOUNT")
+        if not raw:
+            raw = _secret("GCP_SERVICE_ACCOUNT")
         if raw:
             if isinstance(raw, str):
                 info = json.loads(raw)
@@ -3188,10 +3191,10 @@ with st.expander("📊 데이터 연결 상태", expanded=True):
         st.caption("입출고 데이터: **0행** — 입출고 DB 시트가 비었거나 연결되지 않았습니다.")
     if not has_any:
         st.markdown("---")
-        st.markdown("**🔧 연결이 안 될 때:** Streamlit Cloud **Manage app → Secrets**에 아래를 넣으세요.")
-        st.markdown("1. **GCP_SERVICE_ACCOUNT** = 서비스 계정 JSON 전체를 한 줄 문자열로 (따옴표·줄바꿈 이스케이프)")
-        st.markdown("2. **BASE_SPREADSHEET_ID**, **SP_SPREADSHEET_ID**, **MI_SPREADSHEET_ID**, **CV_SPREADSHEET_ID**, **WH_SPREADSHEET_ID**, **RM_SPREADSHEET_ID** = 각 시트 ID")
-        st.markdown("3. Google 시트 6개를 **편집 권한**으로 서비스 계정 이메일(`client_email`)과 공유")
+        st.markdown("**🔧 연결이 안 될 때:** Streamlit **Manage app → Secrets**에 다음을 확인하세요.")
+        st.markdown("1. **서비스 계정**: `[google_service_account]` 섹션에 type, project_id, private_key_id, private_key, client_email 등 입력")
+        st.markdown("2. **스프레드시트 ID**: BASE_SPREADSHEET_ID, SP_SPREADSHEET_ID, MI_SPREADSHEET_ID, CV_SPREADSHEET_ID, WH_SPREADSHEET_ID, RM_SPREADSHEET_ID")
+        st.markdown("3. **시트 공유**: 위 6개 Google 시트를 서비스 계정 이메일(client_email)과 **편집 권한**으로 공유")
 
 # 상단: 제목/업데이트(좌) + 연도/시즌/브랜드/QR 토글(우)
 col_head_left, col_head_right = st.columns([2, 3])
