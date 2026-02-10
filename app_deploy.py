@@ -5,6 +5,7 @@ import gspread
 import os
 from google.oauth2.service_account import Credentials
 from datetime import datetime
+from io import BytesIO
 
 # =====================================================
 # 페이지 설정
