@@ -255,10 +255,12 @@ def _diagnose_google_connection():
 update_time = datetime.now()
 
 
+@st.cache_data(ttl=300)
 def get_excel_sources():
     """
     Google Sheets(또는 로컬 경로)에서만 데이터 소스 확보. 업로드 UI 없음.
     반환: dict key -> (bytes 또는 None, cache_key 문자열)
+    캐시 5분 → 필터만 바꿀 때 재다운로드 안 함(체감 속도 대폭 개선).
     """
     creds_ok = _get_google_credentials() is not None
     sources = {}
@@ -3350,1330 +3352,1339 @@ st.markdown("""
 # (E) UI 렌더링
 # - 상단 헤더(타이틀/필터/토글) → KPI/요약 → 모니터링 표/다운로드 → 푸터
 # =====================================================
-# 상단: 제목/업데이트(좌) + 연도/시즌/브랜드/QR 토글(우)
-col_head_left, col_head_right = st.columns([2, 3])
-with col_head_left:
-    st.markdown('<div class="fashion-title">온라인 리드타임 대시보드</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="update-time">업데이트시간 {update_time.strftime("%Y-%m-%d %H:%M")}</div>', unsafe_allow_html=True)
-with col_head_right:
-    # 맨 우측: 연도(고정 표시) + 시즌 멀티선택 + 브랜드 선택 + QR 토글
-    col_spacer, col_year_season_col, col_brand_col, col_qr_col = st.columns([2, 2, 1, 1])
-    with col_year_season_col:
-        col_yr, col_season = st.columns([1, 2])
-        with col_yr:
-            st.markdown('<div class="year-label">연도</div>', unsafe_allow_html=True)
-            st.markdown('<div class="year-fixed">2026년</div>', unsafe_allow_html=True)
-        with col_season:
-            seasons = ["1", "2", "A", "S", "F"]
-            selected_seasons = st.multiselect("시즌", seasons, default=seasons, key="season_filter")
-    with col_brand_col:
-        brand_options = ["브랜드 전체", "스파오", "미쏘", "후아유", "로엠", "뉴발란스", "뉴발란스 키즈", "에블린", "클라비스", "슈펜"]
-        selected_brand = st.selectbox("브랜드", brand_options, key="brand_filter", index=0)
-    with col_qr_col:
-        qr_toggle_val = st.session_state.get("qr_toggle", True)
-        qr_label = "QR상품 포함" if qr_toggle_val else "QR상품 미포함"
-        st.markdown(f'<div class="qr-block">{qr_label}</div>', unsafe_allow_html=True)
-        qr_toggle = st.toggle("", value=qr_toggle_val, key="qr_toggle", label_visibility="collapsed")
-
-# 입출고 데이터: 연도/시즌 필터 + 결과/입고 필터 적용
-def filter_year_season(df):
-    if df is None or df.empty:
-        return df
-    result = df
-    # 연도는 2026으로 고정 필터링
-    if inout_year_col and inout_year_col in result.columns:
-        year_series = pd.to_numeric(result[inout_year_col], errors="coerce")
-        result = result[year_series == 2026]
-    if inout_season_col and inout_season_col in result.columns and selected_seasons:
-        season_series = result[inout_season_col].astype(str).str.strip()
-        season_norm = season_series.str.replace("시즌", "", regex=False).str.replace(" ", "", regex=False)
-        season_norm = season_norm.str.extract(r"([0-9A-Za-z])", expand=False).fillna(season_series)
-        result = result[season_norm.isin(selected_seasons)]
-    return result
-
-df_inout_filtered = filter_year_season(filter_inbound_rows(filter_result_rows(df_inout)))
-df_inout_table = df_inout_filtered.copy()
-df_inout_order_base = df_inout if df_inout is not None else pd.DataFrame()
-df_inout_in_base = filter_year_season(filter_result_rows(df_inout))
-if selected_brand != "브랜드 전체" and inout_brand_col and inout_brand_col in df_inout_filtered.columns:
-    brand_series = df_inout_filtered[inout_brand_col].astype(str).str.replace(" ", "").str.strip()
-    target_brand = selected_brand.replace(" ", "").strip()
-    df_inout_filtered = df_inout_filtered[brand_series == target_brand]
-def apply_qr_filter(df):
-    # QR 토글이 OFF일 때만 QR 포함 행 제거
-    if df is None or df.empty or qr_toggle:
-        return df
-    if inout_product_col and inout_product_col in df.columns:
-        product_series = df[inout_product_col].astype(str)
-        return df[~product_series.str.contains("QR", case=False, na=False)]
-    qr_mask = pd.Series(False, index=df.index)
-    for c in df.columns:
-        col_series = df[c].astype(str)
-        qr_mask = qr_mask | col_series.str.contains("QR", case=False, na=False)
-    return df[~qr_mask]
-
-df_inout_filtered = apply_qr_filter(df_inout_filtered)
-df_inout_in_base = apply_qr_filter(df_inout_in_base)
-df_inout_out_base = apply_qr_filter(df_inout_table.copy())
-df_inout_in_filtered = df_inout_in_base.copy()
-if selected_brand != "브랜드 전체" and inout_brand_col and inout_brand_col in df_inout_in_filtered.columns:
-    in_brand_series = df_inout_in_filtered[inout_brand_col].astype(str).str.replace(" ", "").str.strip()
-    in_target_brand = selected_brand.replace(" ", "").strip()
-    df_inout_in_filtered = df_inout_in_filtered[in_brand_series == in_target_brand]
-
-# 후아유 입고 스타일 세트(포토 미업로드 계산 기준)
-whoau_inbound_styles = set()
-if df_inout_in_base is not None and not df_inout_in_base.empty and inout_style_col:
-    base_df = df_inout_in_base.copy()
-    if inout_brand_col and inout_brand_col in base_df.columns:
-        brand_series = base_df[inout_brand_col].astype(str).str.replace(" ", "").str.strip()
-        base_df = base_df[brand_series == "후아유"]
+# (E) fragment: filter change only reruns this block -> faster UI
+try:
+    _fragment = st.fragment
+except AttributeError:
+    _fragment = lambda f: f
+@_fragment
+def _render_dashboard():
+    # 상단: 제목/업데이트(좌) + 연도/시즌/브랜드/QR 토글(우)
+    col_head_left, col_head_right = st.columns([2, 3])
+    with col_head_left:
+        st.markdown('<div class="fashion-title">온라인 리드타임 대시보드</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="update-time">업데이트시간 {update_time.strftime("%Y-%m-%d %H:%M")}</div>', unsafe_allow_html=True)
+    with col_head_right:
+        # 맨 우측: 연도(고정 표시) + 시즌 멀티선택 + 브랜드 선택 + QR 토글
+        col_spacer, col_year_season_col, col_brand_col, col_qr_col = st.columns([2, 2, 1, 1])
+        with col_year_season_col:
+            col_yr, col_season = st.columns([1, 2])
+            with col_yr:
+                st.markdown('<div class="year-label">연도</div>', unsafe_allow_html=True)
+                st.markdown('<div class="year-fixed">2026년</div>', unsafe_allow_html=True)
+            with col_season:
+                seasons = ["1", "2", "A", "S", "F"]
+                selected_seasons = st.multiselect("시즌", seasons, default=seasons, key="season_filter")
+        with col_brand_col:
+            brand_options = ["브랜드 전체", "스파오", "미쏘", "후아유", "로엠", "뉴발란스", "뉴발란스 키즈", "에블린", "클라비스", "슈펜"]
+            selected_brand = st.selectbox("브랜드", brand_options, key="brand_filter", index=0)
+        with col_qr_col:
+            qr_toggle_val = st.session_state.get("qr_toggle", True)
+            qr_label = "QR상품 포함" if qr_toggle_val else "QR상품 미포함"
+            st.markdown(f'<div class="qr-block">{qr_label}</div>', unsafe_allow_html=True)
+            qr_toggle = st.toggle("", value=qr_toggle_val, key="qr_toggle", label_visibility="collapsed")
+    
+    # 입출고 데이터: 연도/시즌 필터 + 결과/입고 필터 적용
+    def filter_year_season(df):
+        if df is None or df.empty:
+            return df
+        result = df
+        # 연도는 2026으로 고정 필터링
+        if inout_year_col and inout_year_col in result.columns:
+            year_series = pd.to_numeric(result[inout_year_col], errors="coerce")
+            result = result[year_series == 2026]
+        if inout_season_col and inout_season_col in result.columns and selected_seasons:
+            season_series = result[inout_season_col].astype(str).str.strip()
+            season_norm = season_series.str.replace("시즌", "", regex=False).str.replace(" ", "", regex=False)
+            season_norm = season_norm.str.extract(r"([0-9A-Za-z])", expand=False).fillna(season_series)
+            result = result[season_norm.isin(selected_seasons)]
+        return result
+    
+    df_inout_filtered = filter_year_season(filter_inbound_rows(filter_result_rows(df_inout)))
+    df_inout_table = df_inout_filtered.copy()
+    df_inout_order_base = df_inout if df_inout is not None else pd.DataFrame()
+    df_inout_in_base = filter_year_season(filter_result_rows(df_inout))
+    if selected_brand != "브랜드 전체" and inout_brand_col and inout_brand_col in df_inout_filtered.columns:
+        brand_series = df_inout_filtered[inout_brand_col].astype(str).str.replace(" ", "").str.strip()
+        target_brand = selected_brand.replace(" ", "").strip()
+        df_inout_filtered = df_inout_filtered[brand_series == target_brand]
+    def apply_qr_filter(df):
+        # QR 토글이 OFF일 때만 QR 포함 행 제거
+        if df is None or df.empty or qr_toggle:
+            return df
+        if inout_product_col and inout_product_col in df.columns:
+            product_series = df[inout_product_col].astype(str)
+            return df[~product_series.str.contains("QR", case=False, na=False)]
+        qr_mask = pd.Series(False, index=df.index)
+        for c in df.columns:
+            col_series = df[c].astype(str)
+            qr_mask = qr_mask | col_series.str.contains("QR", case=False, na=False)
+        return df[~qr_mask]
+    
+    df_inout_filtered = apply_qr_filter(df_inout_filtered)
+    df_inout_in_base = apply_qr_filter(df_inout_in_base)
+    df_inout_out_base = apply_qr_filter(df_inout_table.copy())
+    df_inout_in_filtered = df_inout_in_base.copy()
+    if selected_brand != "브랜드 전체" and inout_brand_col and inout_brand_col in df_inout_in_filtered.columns:
+        in_brand_series = df_inout_in_filtered[inout_brand_col].astype(str).str.replace(" ", "").str.strip()
+        in_target_brand = selected_brand.replace(" ", "").strip()
+        df_inout_in_filtered = df_inout_in_filtered[in_brand_series == in_target_brand]
+    
+    # 후아유 입고 스타일 세트(포토 미업로드 계산 기준)
+    whoau_inbound_styles = set()
+    if df_inout_in_base is not None and not df_inout_in_base.empty and inout_style_col:
+        base_df = df_inout_in_base.copy()
+        if inout_brand_col and inout_brand_col in base_df.columns:
+            brand_series = base_df[inout_brand_col].astype(str).str.replace(" ", "").str.strip()
+            base_df = base_df[brand_series == "후아유"]
+        else:
+            style_series = base_df[inout_style_col].astype(str).str.strip()
+            base_df = base_df[style_series.str.upper().str.startswith("WH", na=False)]
+        if inout_style_col in base_df.columns:
+            style_series = base_df[inout_style_col].astype(str).str.strip()
+            style_series = style_series.replace(r"^\s*$", pd.NA, regex=True).dropna()
+            whoau_inbound_styles = set(style_series.tolist())
+    
+    # 입고 스타일수(브랜드별) — 위 입출고 표와 아래 모니터 표가 동일한 수치를 쓰도록 한 번만 계산
+    # 시즌 상세/KPI와 동일: 입고액(또는 누적입고액)이 1 이상인 스타일만 카운트 → 574 등
+    _in_amt_col = inout_cum_in_amt_col or inout_in_amt_col
+    if (
+        df_inout_in_base is not None
+        and not df_inout_in_base.empty
+        and inout_style_col
+        and _in_amt_col
+        and _in_amt_col in df_inout_in_base.columns
+    ):
+        brand_in_qty = count_unique_style_with_amount_by_brand(
+            df_inout_in_base,
+            inout_style_col,
+            _in_amt_col,
+            min_amount=1,
+        )
     else:
-        style_series = base_df[inout_style_col].astype(str).str.strip()
-        base_df = base_df[style_series.str.upper().str.startswith("WH", na=False)]
-    if inout_style_col in base_df.columns:
-        style_series = base_df[inout_style_col].astype(str).str.strip()
-        style_series = style_series.replace(r"^\s*$", pd.NA, regex=True).dropna()
-        whoau_inbound_styles = set(style_series.tolist())
-
-# 입고 스타일수(브랜드별) — 위 입출고 표와 아래 모니터 표가 동일한 수치를 쓰도록 한 번만 계산
-# 시즌 상세/KPI와 동일: 입고액(또는 누적입고액)이 1 이상인 스타일만 카운트 → 574 등
-_in_amt_col = inout_cum_in_amt_col or inout_in_amt_col
-if (
-    df_inout_in_base is not None
-    and not df_inout_in_base.empty
-    and inout_style_col
-    and _in_amt_col
-    and _in_amt_col in df_inout_in_base.columns
-):
-    brand_in_qty = count_unique_style_with_amount_by_brand(
-        df_inout_in_base,
+        brand_in_qty = count_unique_style_by_brand(
+            df_inout_in_base,
+            inout_style_col,
+        )
+    
+    # KPI 산출(금액/스타일 수)
+    kpi_in_amt = safe_sum(
+        df_inout_in_filtered,
+        inout_cum_in_amt_col or inout_in_amt_col,
+    ) if (inout_cum_in_amt_col or inout_in_amt_col) else 0
+    kpi_out_amt = safe_sum(df_inout_filtered, inout_out_amt_col) if inout_out_amt_col else 0
+    kpi_sale_amt = safe_sum(
+        df_inout_filtered,
+        inout_cum_sale_amt_col or inout_sale_amt_col,
+    ) if (inout_cum_sale_amt_col or inout_sale_amt_col) else 0
+    kpi_in_sty = (
+        count_unique_style_with_amount(
+            df_inout_in_filtered,
+            inout_style_col,
+            inout_cum_in_amt_col or inout_in_amt_col,
+            min_amount=1,
+        )
+        if inout_style_col and (inout_cum_in_amt_col or inout_in_amt_col)
+        else 0
+    )
+    kpi_out_sty = (
+        count_unique_style_with_amount(df_inout_filtered, inout_style_col, inout_out_amt_col, min_amount=1)
+        if inout_style_col and inout_out_amt_col
+        else 0
+    )
+    kpi_sale_sty = (
+        count_unique_style_with_amount(
+            df_inout_filtered,
+            inout_style_col,
+            inout_cum_sale_amt_col or inout_sale_amt_col,
+            min_amount=1,
+        )
+        if inout_style_col and (inout_cum_sale_amt_col or inout_sale_amt_col)
+        else 0
+    )
+    
+    def sum_sales_by_channel_labels(df, online_label="온라인매장", excluded_labels=("온라인매장", "지정되지 않음")):
+        # 채널 컬럼 기준 온라인/오프라인 매출 분리(값 표준화에 의존)
+        if df is None or df.empty:
+            return 0, 0
+        if inout_online_offline_col is None or inout_online_offline_col not in df.columns:
+            return 0, 0
+        sale_col = inout_cum_sale_amt_col or inout_sale_amt_col
+        if sale_col is None or sale_col not in df.columns:
+            return 0, 0
+        channel_series = df[inout_online_offline_col].astype(str).str.strip()
+        online_mask = channel_series == online_label
+        offline_mask = ~channel_series.isin(excluded_labels) & channel_series.ne("")
+        online_sum = pd.to_numeric(df.loc[online_mask, sale_col], errors="coerce").sum()
+        offline_sum = pd.to_numeric(df.loc[offline_mask, sale_col], errors="coerce").sum()
+        return online_sum, offline_sum
+    
+    online_sales_amt, offline_sales_amt = sum_sales_by_channel_labels(df_inout_filtered)
+    
+    # KPI 4개 열: 입고/출고/판매 + 온라인/오프라인 매출
+    def format_eok(amount):
+        return f"{amount / 100000000:,.2f} 억 원"
+    
+    c1, c2, c3, c4 = st.columns([1, 1, 1, 0.8])
+    with c1:
+        st.markdown(f'''
+        <div class="kpi-card-dark">
+            <div class="label">입고</div>
+            <div class="value">{format_eok(kpi_in_amt)} / {kpi_in_sty:.0f}STY</div>
+        </div>''', unsafe_allow_html=True)
+    with c2:
+        st.markdown(f'''
+        <div class="kpi-card-dark">
+            <div class="label">출고</div>
+            <div class="value">{format_eok(kpi_out_amt)} / {kpi_out_sty:.0f}STY</div>
+        </div>''', unsafe_allow_html=True)
+    with c3:
+        st.markdown(f'''
+        <div class="kpi-card-dark">
+            <div class="label">판매</div>
+            <div class="value">{format_eok(kpi_sale_amt)} / {kpi_sale_sty:.0f}STY</div>
+        </div>''', unsafe_allow_html=True)
+    with c4:
+        online_sales_display = format_eok(online_sales_amt)
+        st.markdown(f'''
+        <div class="kpi-card-half">
+            <div class="inline-row">
+                <div class="label">온라인 판매</div>
+                <div class="value">{online_sales_display}</div>
+            </div>
+        </div>''', unsafe_allow_html=True)
+        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+        offline_sales_display = format_eok(offline_sales_amt)
+        st.markdown(f'''
+        <div class="kpi-card-half">
+            <div class="inline-row">
+                <div class="label">오프라인 판매</div>
+                <div class="value">{offline_sales_display}</div>
+            </div>
+        </div>''', unsafe_allow_html=True)
+    
+    # --- 온라인 판매 프로세스 소요일 비교 그래프 섹션 ---
+    
+    # 1. 선택 브랜드별 소요일 표시(스파오는 실제 값 반영)
+    display_days = [days_photo_handover, days_shooting, days_product_register]
+    if selected_brand == "스파오":
+        if spao_photo_days is not None:
+            display_days[1] = round(spao_photo_days, 1)
+        if spao_register_days is not None:
+            display_days[2] = round(spao_register_days, 1)
+    if selected_brand == "후아유":
+        if whoau_handover_days is not None:
+            display_days[0] = round(whoau_handover_days, 1)
+        if whoau_shooting_days is not None:
+            display_days[1] = round(whoau_shooting_days, 1)
+        if whoau_register_avg_days is not None:
+            display_days[2] = round(whoau_register_avg_days, 1)
+        elif whoau_register_days is not None:
+            display_days[2] = round(whoau_register_days, 1)
+    if selected_brand == "클라비스":
+        if clavis_handover_days is not None:
+            display_days[0] = round(clavis_handover_days, 1)
+        if clavis_shooting_days is not None:
+            display_days[1] = round(clavis_shooting_days, 1)
+        display_days[2] = 0.0
+    if selected_brand == "미쏘":
+        if mixxo_handover_days is not None:
+            display_days[0] = round(mixxo_handover_days, 1)
+        if mixxo_shooting_days is not None:
+            display_days[1] = round(mixxo_shooting_days, 1)
+        if mixxo_register_avg_days is not None:
+            display_days[2] = round(mixxo_register_avg_days, 1)
+        elif mixxo_register_days is not None:
+            display_days[2] = round(mixxo_register_days, 1)
+    if selected_brand == "로엠":
+        if roem_handover_days is not None:
+            display_days[0] = round(roem_handover_days, 1)
+        if roem_shooting_days is not None:
+            display_days[1] = round(roem_shooting_days, 1)
+        if roem_register_avg_days is not None:
+            display_days[2] = round(roem_register_avg_days, 1)
+        elif roem_register_days is not None:
+            display_days[2] = round(roem_register_days, 1)
+    
+    st.markdown(
+        f'<div class="section-title" style="font-size: 1.6rem;">{selected_brand} 단계별 리드타임</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f'''
+        <div class="process-flow">
+            <div class="process-circle">물류<br>입고</div>
+            <div class="process-arrow-box">
+                <div class="content">
+                    <span class="line">포토팀 상품인계</span>
+                    <span class="line days">{display_days[0]:.1f}일</span>
+                </div>
+            </div>
+            <div class="process-arrow-box">
+                <div class="content">
+                    <span class="line">촬영</span>
+                    <span class="line days">{display_days[1]:.1f}일</span>
+                </div>
+            </div>
+            <div class="process-arrow-box">
+                <div class="content">
+                    <span class="line">상품등록</span>
+                    <span class="line days">{display_days[2]:.1f}일</span>
+                </div>
+            </div>
+            <div class="process-circle">온라인<br>판매개시</div>
+        </div>
+        ''',
+        unsafe_allow_html=True,
+    )
+    if selected_brand == "스파오" and (spao_register_header_cell or spao_photo_header_cell):
+        st.caption(
+            f"공홈등록 소요일 위치: {spao_register_header_cell} · "
+            f"숫자 {spao_register_count}개 평균"
+        )
+    if selected_brand == "스파오" and spao_photo_header_cell:
+        st.caption(
+            f"포토소요일 위치: {spao_photo_header_cell} · "
+            f"숫자 {spao_photo_count}개 평균"
+        )
+    if selected_brand == "후아유" and whoau_handover_header_cell:
+        st.caption(
+            f"포토팀 상품인계 위치: {whoau_handover_header_cell} · "
+            f"숫자 {whoau_handover_count}개 평균"
+        )
+    if selected_brand == "후아유" and whoau_shooting_header_cell:
+        st.caption(
+            f"촬영 소요일 위치: {whoau_shooting_header_cell} · "
+            f"숫자 {whoau_shooting_count}개 평균"
+        )
+    if selected_brand == "후아유" and whoau_register_header_cell:
+        st.caption(
+            f"상품등록 소요일 위치: {whoau_register_header_cell} · "
+            f"숫자 {whoau_register_count}개 평균"
+        )
+    if selected_brand == "클라비스" and clavis_handover_header_cell:
+        st.caption(
+            f"포토팀 상품인계 위치: {clavis_handover_header_cell} · "
+            f"숫자 {clavis_handover_count}개 평균"
+        )
+    if selected_brand == "클라비스" and clavis_shooting_header_cell:
+        st.caption(
+            f"촬영 소요일 위치: {clavis_shooting_header_cell} · "
+            f"숫자 {clavis_shooting_count}개 평균"
+        )
+    if selected_brand == "클라비스" and clavis_register_header_cell:
+        st.caption(
+            f"상품등록 소요일 위치: {clavis_register_header_cell} · "
+            f"숫자 {clavis_register_count}개 평균"
+        )
+    if selected_brand == "미쏘" and mixxo_handover_header_cell:
+        st.caption(
+            f"포토팀 상품인계 위치: {mixxo_handover_header_cell} · "
+            f"숫자 {mixxo_handover_count}개 평균"
+        )
+    if selected_brand == "미쏘" and mixxo_shooting_header_cell:
+        st.caption(
+            f"촬영 소요일 위치: {mixxo_shooting_header_cell} · "
+            f"숫자 {mixxo_shooting_count}개 평균"
+        )
+    if selected_brand == "미쏘" and mixxo_register_header_cell:
+        st.caption(
+            f"상품등록 소요일 위치: {mixxo_register_header_cell} · "
+            f"숫자 {mixxo_register_count}개 평균"
+        )
+    if selected_brand == "로엠" and roem_handover_header_cell:
+        st.caption(
+            f"포토팀 상품인계 위치: {roem_handover_header_cell} · "
+            f"숫자 {roem_handover_count}개 평균"
+        )
+    if selected_brand == "로엠" and roem_shooting_header_cell:
+        st.caption(
+            f"촬영 소요일 위치: {roem_shooting_header_cell} · "
+            f"숫자 {roem_shooting_count}개 평균"
+        )
+    if selected_brand == "로엠" and roem_register_header_cell:
+        st.caption(
+            f"상품등록 소요일 위치: {roem_register_header_cell} · "
+            f"숫자 {roem_register_count}개 평균"
+        )
+    
+    # 브랜드별 상품등록 모니터링 (상단 표)
+    st.markdown("<div style='margin-top: 120px;'></div>", unsafe_allow_html=True)
+    st.markdown("---")
+    title_col, download_col = st.columns([8, 2])
+    with title_col:
+        st.markdown('<div class="section-title">브랜드별 상품등록 모니터링</div>', unsafe_allow_html=True)
+    monitor_columns = [
+        "브랜드",
+        "스타일수(입고상품 기준)",
+        "온라인 등록 스타일수",
+        "온라인등록율",
+        "평균 등록 소요일수",
+        "등록수",
+        "온라인등록율(전주대비)",
+        "합계",
+        "미분배(분배팀)",
+        "포토 미업로드(포토팀)",
+        "상품 미등록(온라인)",
+    ]
+    # 스타일수(입고상품 기준): 위쪽 입출고 표와 동일한 brand_in_qty 사용(이미 위에서 입고액≥1 기준으로 계산됨)
+    def format_monitor_num(value):
+        if value is None or pd.isna(value):
+            return "0"
+        try:
+            return f"{int(round(float(value))):,}"
+        except Exception:
+            return "0"
+    
+    def format_monitor_optional(value):
+        if value is None or pd.isna(value):
+            return ""
+        try:
+            if float(value) == 0:
+                return ""
+            return f"{int(round(float(value))):,}"
+        except Exception:
+            return ""
+    
+    def format_monitor_percent(value):
+        if value is None:
+            return ""
+        try:
+            return f"{int(round(float(value) * 100)):d}%"
+        except Exception:
+            return ""
+    
+    def format_monitor_days(value):
+        if value is None or pd.isna(value):
+            return ""
+        try:
+            return f"{float(value):.1f}"
+        except Exception:
+            return ""
+    monitor_rows = []
+    bu_labels = {label for label, _ in bu_groups}
+    for bu_label, bu_brands in bu_groups:
+        monitor_rows.append({"브랜드": bu_label})
+        for brand in bu_brands:
+            monitor_rows.append({"브랜드": brand})
+    monitor_df = pd.DataFrame(monitor_rows)
+    for col in monitor_columns:
+        if col not in monitor_df.columns:
+            monitor_df[col] = ""
+    style_count_by_brand = {}
+    if "스타일수(입고상품 기준)" in monitor_df.columns:
+        def resolve_style_count(brand_name):
+            if brand_name in bu_labels:
+                brands = next((b for l, b in bu_groups if l == brand_name), [])
+                return sum(brand_in_qty.get(b, 0) for b in brands)
+            return brand_in_qty.get(brand_name, 0)
+        style_count_by_brand = {b: resolve_style_count(b) for b in monitor_df["브랜드"]}
+        monitor_df["스타일수(입고상품 기준)"] = monitor_df["브랜드"].map(
+            lambda b: format_monitor_num(style_count_by_brand.get(b, 0))
+        )
+    out_style_count_by_brand = {}
+    if "미분배(분배팀)" in monitor_df.columns and inout_style_col:
+        out_style_counts = count_unique_style_with_amount_by_brand(
+            df_inout_out_base,
+            inout_style_col,
+            inout_out_amt_col,
+            min_amount=1,
+        )
+        def resolve_out_style_count(brand_name):
+            if brand_name in bu_labels:
+                brands = next((b for l, b in bu_groups if l == brand_name), [])
+                return sum(out_style_counts.get(b, 0) for b in brands)
+            return out_style_counts.get(brand_name, 0)
+        out_style_count_by_brand = {b: resolve_out_style_count(b) for b in monitor_df["브랜드"]}
+        monitor_df["미분배(분배팀)"] = monitor_df["브랜드"].map(
+            lambda b: format_monitor_num(
+                max(style_count_by_brand.get(b, 0) - out_style_count_by_brand.get(b, 0), 0)
+            )
+        )
+        undist_hide_brands = {"미쏘", "로엠", "클라비스", "에블린", "슈펜"}
+        monitor_df.loc[
+            monitor_df["브랜드"].isin(undist_hide_brands),
+            "미분배(분배팀)",
+        ] = "-"
+    if "온라인 등록 스타일수" in monitor_df.columns:
+        register_style_counts = {}
+        if spao_register_style_count is not None:
+            register_style_counts["스파오"] = spao_register_style_count
+        if whoau_register_style_count is not None:
+            register_style_counts["후아유"] = whoau_register_style_count
+        if clavis_register_style_count is not None:
+            register_style_counts["클라비스"] = clavis_register_style_count
+        if mixxo_register_style_count is not None:
+            register_style_counts["미쏘"] = mixxo_register_style_count
+        if roem_register_style_count is not None:
+            register_style_counts["로엠"] = roem_register_style_count
+        def has_online_register_data(brand_name):
+            if brand_name in bu_labels:
+                brands = next((b for l, b in bu_groups if l == brand_name), [])
+                return any(b in register_style_counts for b in brands)
+            return brand_name in register_style_counts
+        def resolve_register_style_count(brand_name):
+            if brand_name in bu_labels:
+                brands = next((b for l, b in bu_groups if l == brand_name), [])
+                return sum(register_style_counts.get(b, 0) for b in brands)
+            return register_style_counts.get(brand_name, 0)
+        register_count_by_brand = {b: resolve_register_style_count(b) for b in monitor_df["브랜드"]}
+        monitor_df["온라인 등록 스타일수"] = monitor_df["브랜드"].map(
+            lambda b: format_monitor_optional(register_count_by_brand.get(b, 0))
+        )
+    if "합계" in monitor_df.columns:
+        def resolve_unregistered_total(brand_name):
+            if brand_name in bu_labels:
+                brands = next((b for l, b in bu_groups if l == brand_name), [])
+                return sum(
+                    max(style_count_by_brand.get(b, 0) - register_count_by_brand.get(b, 0), 0)
+                    for b in brands
+                )
+            return max(
+                style_count_by_brand.get(brand_name, 0) - register_count_by_brand.get(brand_name, 0),
+                0,
+            )
+        monitor_df["합계"] = monitor_df["브랜드"].map(
+            lambda b: format_monitor_num(resolve_unregistered_total(b))
+        )
+    if "상품 미등록(온라인)" in monitor_df.columns:
+        unregistered_counts = {
+            "후아유": whoau_unregistered_online_count,
+            "스파오": spao_unregistered_online_count,
+            "클라비스": clavis_unregistered_online_count,
+            "미쏘": mixxo_unregistered_online_count,
+            "로엠": roem_unregistered_online_count,
+        }
+        def format_dash_if_no_register(brand_name, value):
+            if not has_online_register_data(brand_name):
+                return "-"
+            return format_monitor_optional(value)
+        def resolve_unregistered(brand_name):
+            if brand_name in bu_labels:
+                brands = next((b for l, b in bu_groups if l == brand_name), [])
+                return sum(unregistered_counts.get(b, 0) for b in brands)
+            return unregistered_counts.get(brand_name, 0)
+        monitor_df["상품 미등록(온라인)"] = monitor_df["브랜드"].map(
+            lambda b: format_dash_if_no_register(b, resolve_unregistered(b))
+        )
+    if "포토 미업로드(포토팀)" in monitor_df.columns:
+        def resolve_photo_missing(brand_name):
+            if brand_name in bu_labels:
+                brands = next((b for l, b in bu_groups if l == brand_name), [])
+                total = sum(
+                    max(style_count_by_brand.get(b, 0) - register_count_by_brand.get(b, 0), 0)
+                    for b in brands
+                )
+                undist = sum(
+                    max(style_count_by_brand.get(b, 0) - out_style_count_by_brand.get(b, 0), 0)
+                    for b in brands
+                )
+                unregistered = sum(unregistered_counts.get(b, 0) for b in brands)
+                return max(total - (undist + unregistered), 0)
+            total = max(
+                style_count_by_brand.get(brand_name, 0) - register_count_by_brand.get(brand_name, 0), 0
+            )
+            undist = max(
+                style_count_by_brand.get(brand_name, 0) - out_style_count_by_brand.get(brand_name, 0), 0
+            )
+            unregistered = unregistered_counts.get(brand_name, 0)
+            return max(total - (undist + unregistered), 0)
+        monitor_df["포토 미업로드(포토팀)"] = monitor_df["브랜드"].map(
+            lambda b: format_dash_if_no_register(b, resolve_photo_missing(b))
+        )
+    if "평균 등록 소요일수" in monitor_df.columns:
+        avg_days_by_brand = {}
+        if spao_register_avg_days is not None:
+            avg_days_by_brand["스파오"] = spao_register_avg_days
+        if whoau_register_avg_days is not None:
+            avg_days_by_brand["후아유"] = whoau_register_avg_days
+        if clavis_register_avg_days is not None:
+            avg_days_by_brand["클라비스"] = clavis_register_avg_days
+        if mixxo_register_avg_days is not None:
+            avg_days_by_brand["미쏘"] = mixxo_register_avg_days
+        if roem_register_avg_days is not None:
+            avg_days_by_brand["로엠"] = roem_register_avg_days
+        def resolve_avg_days(brand_name):
+            if brand_name in bu_labels:
+                brands = next((b for l, b in bu_groups if l == brand_name), [])
+                values = [avg_days_by_brand.get(b) for b in brands]
+                values = [v for v in values if v is not None and not pd.isna(v)]
+                if not values:
+                    return None
+                return float(sum(values)) / len(values)
+            return avg_days_by_brand.get(brand_name)
+        monitor_df["평균 등록 소요일수"] = monitor_df["브랜드"].map(
+            lambda b: format_monitor_days(resolve_avg_days(b))
+        )
+    register_rate_by_brand = {}
+    if "온라인등록율" in monitor_df.columns:
+        def resolve_register_rate(brand_name):
+            style_count = style_count_by_brand.get(brand_name, 0)
+            register_count = register_count_by_brand.get(brand_name, 0)
+            if style_count and register_count is not None and register_count != 0:
+                return register_count / style_count
+            return None
+        register_rate_by_brand = {b: resolve_register_rate(b) for b in monitor_df["브랜드"]}
+        monitor_df["온라인등록율"] = monitor_df["브랜드"].map(
+            lambda b: format_monitor_percent(register_rate_by_brand.get(b))
+        )
+    monitor_df = monitor_df[monitor_columns]
+    def build_monitor_table_html(df, rate_by_brand):
+        """
+        (D) [상품등록 모니터링] HTML 테이블 생성 함수.
+    
+        - Streamlit에서 `unsafe_allow_html=True`로 렌더링됩니다.
+        - 색상 점/툴팁 등 표시 로직이 포함되어 있어, UI/스타일 변경 시 이 함수부터 확인하면 됩니다.
+        """
+        # HTML 테이블 직접 렌더링(색상 점/툴팁 포함)
+        def safe_cell(val):
+            text = "" if val is None else str(val)
+            return text if text.strip() else "&nbsp;"
+        def build_rate_cell(brand_name, rate_text):
+            rate_val = rate_by_brand.get(brand_name)
+            if rate_val is None:
+                return safe_cell(rate_text)
+            if rate_val <= 0.8:
+                dot_class = "rate-red"
+            elif rate_val <= 0.9:
+                dot_class = "rate-yellow"
+            else:
+                dot_class = "rate-green"
+            tooltip = "(초록불) 90% 초과&#10;(노란불) 80% 초과&#10;(빨간불) 80% 이하"
+            return f"<span class='rate-cell' data-tooltip='{tooltip}'><span class='rate-dot {dot_class}'></span>{safe_cell(rate_text)}</span>"
+        def build_avg_days_cell(value_text):
+            tooltip = "(초록불) 3일 이하&#10;(노란불) 5일 이하&#10;(빨간불) 5일 초과"
+            dot_class = ""
+            try:
+                num_val = float(str(value_text).replace(",", "").strip())
+                if num_val <= 3:
+                    dot_class = "rate-green"
+                elif num_val <= 5:
+                    dot_class = "rate-yellow"
+                else:
+                    dot_class = "rate-red"
+            except Exception:
+                dot_class = ""
+            dot_html = f"<span class='rate-dot {dot_class}'></span>" if dot_class else ""
+            return f"<span class='avg-cell' data-tooltip='{tooltip}'>{dot_html}{safe_cell(value_text)}</span>"
+        header_top = (
+            "<tr>"
+            "<th rowspan='2'>브랜드</th>"
+            "<th class='group-head' colspan='4'>공통</th>"
+            "<th class='group-head' colspan='2'>전주대비</th>"
+            "<th class='group-head' colspan='4'>미등록현황</th>"
+            "</tr>"
+        )
+        header_bottom = (
+            "<tr>"
+            "<th>입고스타일수</th>"
+            "<th>온라인등록<br>스타일수</th>"
+            "<th><span class='rate-help' data-tooltip='(초록불) 90% 초과&#10;(노란불) 80% 초과&#10;(빨간불) 80% 이하'>온라인<br>등록율</span></th>"
+            "<th><span class='avg-help' data-tooltip='(온라인상품등록일 - 최초입고일)'>평균 등록 소요일수<br><span style='font-size:0.8rem; font-weight:500; color:#94a3b8;'>온라인상품등록일 - 최초입고일</span></span></th>"
+            "<th>등록수</th>"
+            "<th><span class='rate-help' data-tooltip='(초록불) 90% 초과&#10;(노란불) 80% 초과&#10;(빨간불) 80% 이하'>온라인등록율</span></th>"
+            "<th><span class='sum-help' data-tooltip='(입고스타일수 - 온라인등록스타일수)'>전체 미등록 스타일</span></th>"
+            "<th>미분배<br>(분배팀)</th>"
+            "<th>포토 미업로드<br>(포토팀)</th>"
+            "<th>상품 미등록<br>(온라인)</th>"
+            "</tr>"
+        )
+        body_rows = []
+        for _, row in df.iterrows():
+            row_class = "bu-row" if row.get("브랜드") in bu_labels else ""
+            cells = []
+            for col in monitor_columns:
+                if col == "등록율":
+                    cells.append(build_rate_cell(row.get("브랜드"), row.get(col, "")))
+                elif col == "평균 등록 소요일수":
+                    cells.append(build_avg_days_cell(row.get(col, "")))
+                else:
+                    cells.append(safe_cell(row.get(col, "")))
+            body_rows.append(f"<tr class='{row_class}'>" + "".join(f"<td>{c}</td>" for c in cells) + "</tr>")
+        table_html = f"""
+        <style>
+            .monitor-table {{
+                width: 100%;
+                border-collapse: collapse;
+                background: #1e293b;
+                color: #f1f5f9;
+                border: 1px solid #334155;
+            }}
+            .monitor-table th, .monitor-table td {{
+                border: 1px solid #334155;
+                padding: 6px 8px;
+                text-align: center;
+                font-size: 0.95rem;
+            }}
+            .monitor-table thead th {{
+                background: #0f172a;
+                color: #f1f5f9;
+                font-weight: 700;
+            }}
+            .monitor-table .group-head {{
+                background: #111827;
+                color: #f1f5f9;
+                font-size: 1rem;
+            }}
+            .monitor-table tr.bu-row td {{
+                background-color: #d9f7ee;
+                color: #000000;
+                font-size: 1.15rem;
+                font-weight: 700;
+            }}
+            .monitor-table .rate-cell {{
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+                justify-content: center;
+                position: relative;
+                cursor: help;
+            }}
+            .monitor-table .avg-cell {{
+                position: relative;
+                cursor: help;
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+                justify-content: center;
+            }}
+            .monitor-table .rate-dot {{
+                width: 16px;
+                height: 16px;
+                border-radius: 50%;
+                display: inline-block;
+            }}
+            .monitor-table .rate-red {{ background: #ef4444; }}
+            .monitor-table .rate-yellow {{ background: #f59e0b; }}
+            .monitor-table .rate-green {{ background: #22c55e; }}
+            .monitor-table .rate-cell::after {{
+                content: "";
+                position: absolute;
+                opacity: 0;
+                pointer-events: none;
+                transition: opacity 0.15s ease-in-out;
+                left: 50%;
+                transform: translateX(-50%);
+                bottom: calc(100% + 6px);
+                white-space: pre;
+                word-break: keep-all;
+                width: max-content;
+                max-width: none;
+                background: #111827;
+                color: #f1f5f9;
+                padding: 6px 8px;
+                border-radius: 6px;
+                font-size: 0.85rem;
+                text-align: left;
+                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+                z-index: 20;
+            }}
+            .monitor-table .rate-cell:hover::after {{
+                content: attr(data-tooltip);
+                opacity: 1;
+            }}
+            .monitor-table .rate-help {{
+                position: relative;
+                display: inline-block;
+                cursor: help;
+            }}
+            .monitor-table .avg-help {{
+                position: relative;
+                display: inline-block;
+                cursor: help;
+            }}
+            .monitor-table .sum-help {{
+                position: relative;
+                display: inline-block;
+                cursor: help;
+            }}
+            .monitor-table .rate-help::after {{
+                content: "";
+                position: absolute;
+                opacity: 0;
+                pointer-events: none;
+                transition: opacity 0.15s ease-in-out;
+                left: 50%;
+                transform: translateX(-50%);
+                bottom: calc(100% + 6px);
+                white-space: pre;
+                word-break: keep-all;
+                width: max-content;
+                max-width: none;
+                background: #111827;
+                color: #f1f5f9;
+                padding: 6px 8px;
+                border-radius: 6px;
+                font-size: 0.85rem;
+                text-align: left;
+                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+                z-index: 20;
+            }}
+            .monitor-table .rate-help:hover::after {{
+                content: attr(data-tooltip);
+                opacity: 1;
+            }}
+            .monitor-table .avg-cell::after {{
+                content: "";
+                position: absolute;
+                opacity: 0;
+                pointer-events: none;
+                transition: opacity 0.15s ease-in-out;
+                left: 50%;
+                transform: translateX(-50%);
+                bottom: calc(100% + 6px);
+                background: #111827;
+                color: #f1f5f9;
+                padding: 6px 8px;
+                border-radius: 6px;
+                font-size: 0.85rem;
+                text-align: left;
+                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+                z-index: 20;
+                white-space: pre;
+                word-break: keep-all;
+                width: max-content;
+                max-width: none;
+            }}
+            .monitor-table .avg-cell:hover::after {{
+                content: attr(data-tooltip);
+                opacity: 1;
+            }}
+            .monitor-table .avg-help::after {{
+                content: "";
+                position: absolute;
+                opacity: 0;
+                pointer-events: none;
+                transition: opacity 0.15s ease-in-out;
+                left: 50%;
+                transform: translateX(-50%);
+                bottom: calc(100% + 6px);
+                background: #111827;
+                color: #f1f5f9;
+                padding: 6px 8px;
+                border-radius: 6px;
+                font-size: 0.85rem;
+                text-align: left;
+                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+                z-index: 20;
+                white-space: pre;
+                word-break: keep-all;
+                width: max-content;
+                max-width: none;
+            }}
+            .monitor-table .avg-help:hover::after {{
+                content: attr(data-tooltip);
+                opacity: 1;
+            }}
+            .monitor-table .sum-help::after {{
+                content: "";
+                position: absolute;
+                opacity: 0;
+                pointer-events: none;
+                transition: opacity 0.15s ease-in-out;
+                left: 50%;
+                transform: translateX(-50%);
+                bottom: calc(100% + 6px);
+                background: #111827;
+                color: #f1f5f9;
+                padding: 6px 8px;
+                border-radius: 6px;
+                font-size: 0.85rem;
+                text-align: left;
+                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+                z-index: 20;
+                white-space: pre;
+                word-break: keep-all;
+                width: max-content;
+                max-width: none;
+            }}
+            .monitor-table .sum-help:hover::after {{
+                content: attr(data-tooltip);
+                opacity: 1;
+            }}
+        </style>
+        <table class="monitor-table">
+            <thead>{header_top}{header_bottom}</thead>
+            <tbody>{''.join(body_rows)}</tbody>
+        </table>
+        """
+        return table_html
+    
+    st.markdown(build_monitor_table_html(monitor_df, register_rate_by_brand), unsafe_allow_html=True)
+    
+    # 브랜드별 상품등록 모니터링 다운로드
+    def to_xlsx_bytes_monitor(df):
+        buffer = BytesIO()
+        export_df = df[monitor_columns] if all(c in df.columns for c in monitor_columns) else df
+        export_df.to_excel(buffer, index=False, engine="openpyxl")
+        return buffer.getvalue()
+    
+    monitor_xlsx_data = to_xlsx_bytes_monitor(monitor_df)
+    with download_col:
+        st.markdown("<div class='download-right-marker'></div>", unsafe_allow_html=True)
+        monitor_download_ts = datetime.now().strftime("%Y%m%d_%H%M")
+        st.download_button(
+            label="엑셀 다운로드",
+            data=monitor_xlsx_data,
+            file_name=f"브랜드별 상품등록 모니터링_{monitor_download_ts}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="download_monitor_xlsx",
+        )
+    
+    # 브랜드 상세(입출고 모니터링)
+    st.markdown('<div style="height:40px;"></div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">브랜드별 입출고 모니터링</div>', unsafe_allow_html=True)
+    
+    unit_left, _unit_right = st.columns([6, 5])
+    
+    # 브랜드 상세 토글 (STY/SKU) - QR 토글과 동일 스타일
+    with unit_left:
+        sty_toggle_val = st.session_state.get("sty_toggle", True)
+        sty_label = "STY 기준 통계" if sty_toggle_val else "SKU 기준 통계"
+        st.markdown(f'<div class="unit-toggle-label">{sty_label}</div>', unsafe_allow_html=True)
+        sty_toggle = st.toggle("", value=sty_toggle_val, key="sty_toggle", label_visibility="collapsed")
+    
+    # 브랜드 상세 테이블 컬럼(STY 또는 SKU)
+    if sty_toggle:
+        table_columns = [
+            "발주 STY수", "발주액", "입고 STY수", "입고액",
+            "출고 STY수", "출고액", "판매 STY수", "판매액"
+        ]
+    else:
+        table_columns = [
+            "발주 SKU수", "발주액", "입고 SKU수", "입고액",
+            "출고 SKU수", "출고액", "판매 SKU수", "판매액"
+        ]
+    brand_rows = []
+    brand_order_qty = count_unique_style_with_amount_by_brand(
+        df_inout_order_base, inout_style_col, inout_order_qty_col, min_amount=1
+    )
+    brand_order_sku_qty = count_unique_sku_with_amount_by_brand(
+        df_inout_order_base,
         inout_style_col,
-        _in_amt_col,
+        inout_color_col,
+        inout_order_qty_col,
         min_amount=1,
     )
-else:
-    brand_in_qty = count_unique_style_by_brand(
+    brand_order_amt = sum_by_brand(df_inout_order_base, inout_order_amt_col)
+    # brand_in_qty는 위쪽에서 입고액≥1 기준으로 이미 계산됨(입출고 표·모니터 표 공통)
+    brand_in_sku_qty = count_unique_sku_with_amount_by_brand(
         df_inout_in_base,
         inout_style_col,
-    )
-
-# KPI 산출(금액/스타일 수)
-kpi_in_amt = safe_sum(
-    df_inout_in_filtered,
-    inout_cum_in_amt_col or inout_in_amt_col,
-) if (inout_cum_in_amt_col or inout_in_amt_col) else 0
-kpi_out_amt = safe_sum(df_inout_filtered, inout_out_amt_col) if inout_out_amt_col else 0
-kpi_sale_amt = safe_sum(
-    df_inout_filtered,
-    inout_cum_sale_amt_col or inout_sale_amt_col,
-) if (inout_cum_sale_amt_col or inout_sale_amt_col) else 0
-kpi_in_sty = (
-    count_unique_style_with_amount(
-        df_inout_in_filtered,
-        inout_style_col,
+        inout_color_col,
         inout_cum_in_amt_col or inout_in_amt_col,
         min_amount=1,
     )
-    if inout_style_col and (inout_cum_in_amt_col or inout_in_amt_col)
-    else 0
-)
-kpi_out_sty = (
-    count_unique_style_with_amount(df_inout_filtered, inout_style_col, inout_out_amt_col, min_amount=1)
-    if inout_style_col and inout_out_amt_col
-    else 0
-)
-kpi_sale_sty = (
-    count_unique_style_with_amount(
-        df_inout_filtered,
-        inout_style_col,
-        inout_cum_sale_amt_col or inout_sale_amt_col,
-        min_amount=1,
+    brand_in_amt = sum_by_brand(df_inout_in_base, inout_cum_in_amt_col or inout_in_amt_col)
+    brand_out_qty = count_unique_style_by_brand(df_inout_table, inout_style_col)
+    brand_out_sku_qty = count_unique_sku_with_amount_by_brand(
+        df_inout_table, inout_style_col, inout_color_col, inout_out_amt_col, min_amount=1
     )
-    if inout_style_col and (inout_cum_sale_amt_col or inout_sale_amt_col)
-    else 0
-)
-
-def sum_sales_by_channel_labels(df, online_label="온라인매장", excluded_labels=("온라인매장", "지정되지 않음")):
-    # 채널 컬럼 기준 온라인/오프라인 매출 분리(값 표준화에 의존)
-    if df is None or df.empty:
-        return 0, 0
-    if inout_online_offline_col is None or inout_online_offline_col not in df.columns:
-        return 0, 0
-    sale_col = inout_cum_sale_amt_col or inout_sale_amt_col
-    if sale_col is None or sale_col not in df.columns:
-        return 0, 0
-    channel_series = df[inout_online_offline_col].astype(str).str.strip()
-    online_mask = channel_series == online_label
-    offline_mask = ~channel_series.isin(excluded_labels) & channel_series.ne("")
-    online_sum = pd.to_numeric(df.loc[online_mask, sale_col], errors="coerce").sum()
-    offline_sum = pd.to_numeric(df.loc[offline_mask, sale_col], errors="coerce").sum()
-    return online_sum, offline_sum
-
-online_sales_amt, offline_sales_amt = sum_sales_by_channel_labels(df_inout_filtered)
-
-# KPI 4개 열: 입고/출고/판매 + 온라인/오프라인 매출
-def format_eok(amount):
-    return f"{amount / 100000000:,.2f} 억 원"
-
-c1, c2, c3, c4 = st.columns([1, 1, 1, 0.8])
-with c1:
-    st.markdown(f'''
-    <div class="kpi-card-dark">
-        <div class="label">입고</div>
-        <div class="value">{format_eok(kpi_in_amt)} / {kpi_in_sty:.0f}STY</div>
-    </div>''', unsafe_allow_html=True)
-with c2:
-    st.markdown(f'''
-    <div class="kpi-card-dark">
-        <div class="label">출고</div>
-        <div class="value">{format_eok(kpi_out_amt)} / {kpi_out_sty:.0f}STY</div>
-    </div>''', unsafe_allow_html=True)
-with c3:
-    st.markdown(f'''
-    <div class="kpi-card-dark">
-        <div class="label">판매</div>
-        <div class="value">{format_eok(kpi_sale_amt)} / {kpi_sale_sty:.0f}STY</div>
-    </div>''', unsafe_allow_html=True)
-with c4:
-    online_sales_display = format_eok(online_sales_amt)
-    st.markdown(f'''
-    <div class="kpi-card-half">
-        <div class="inline-row">
-            <div class="label">온라인 판매</div>
-            <div class="value">{online_sales_display}</div>
-        </div>
-    </div>''', unsafe_allow_html=True)
-    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-    offline_sales_display = format_eok(offline_sales_amt)
-    st.markdown(f'''
-    <div class="kpi-card-half">
-        <div class="inline-row">
-            <div class="label">오프라인 판매</div>
-            <div class="value">{offline_sales_display}</div>
-        </div>
-    </div>''', unsafe_allow_html=True)
-
-# --- 온라인 판매 프로세스 소요일 비교 그래프 섹션 ---
-
-# 1. 선택 브랜드별 소요일 표시(스파오는 실제 값 반영)
-display_days = [days_photo_handover, days_shooting, days_product_register]
-if selected_brand == "스파오":
-    if spao_photo_days is not None:
-        display_days[1] = round(spao_photo_days, 1)
-    if spao_register_days is not None:
-        display_days[2] = round(spao_register_days, 1)
-if selected_brand == "후아유":
-    if whoau_handover_days is not None:
-        display_days[0] = round(whoau_handover_days, 1)
-    if whoau_shooting_days is not None:
-        display_days[1] = round(whoau_shooting_days, 1)
-    if whoau_register_avg_days is not None:
-        display_days[2] = round(whoau_register_avg_days, 1)
-    elif whoau_register_days is not None:
-        display_days[2] = round(whoau_register_days, 1)
-if selected_brand == "클라비스":
-    if clavis_handover_days is not None:
-        display_days[0] = round(clavis_handover_days, 1)
-    if clavis_shooting_days is not None:
-        display_days[1] = round(clavis_shooting_days, 1)
-    display_days[2] = 0.0
-if selected_brand == "미쏘":
-    if mixxo_handover_days is not None:
-        display_days[0] = round(mixxo_handover_days, 1)
-    if mixxo_shooting_days is not None:
-        display_days[1] = round(mixxo_shooting_days, 1)
-    if mixxo_register_avg_days is not None:
-        display_days[2] = round(mixxo_register_avg_days, 1)
-    elif mixxo_register_days is not None:
-        display_days[2] = round(mixxo_register_days, 1)
-if selected_brand == "로엠":
-    if roem_handover_days is not None:
-        display_days[0] = round(roem_handover_days, 1)
-    if roem_shooting_days is not None:
-        display_days[1] = round(roem_shooting_days, 1)
-    if roem_register_avg_days is not None:
-        display_days[2] = round(roem_register_avg_days, 1)
-    elif roem_register_days is not None:
-        display_days[2] = round(roem_register_days, 1)
-
-st.markdown(
-    f'<div class="section-title" style="font-size: 1.6rem;">{selected_brand} 단계별 리드타임</div>',
-    unsafe_allow_html=True,
-)
-st.markdown(
-    f'''
-    <div class="process-flow">
-        <div class="process-circle">물류<br>입고</div>
-        <div class="process-arrow-box">
-            <div class="content">
-                <span class="line">포토팀 상품인계</span>
-                <span class="line days">{display_days[0]:.1f}일</span>
-            </div>
-        </div>
-        <div class="process-arrow-box">
-            <div class="content">
-                <span class="line">촬영</span>
-                <span class="line days">{display_days[1]:.1f}일</span>
-            </div>
-        </div>
-        <div class="process-arrow-box">
-            <div class="content">
-                <span class="line">상품등록</span>
-                <span class="line days">{display_days[2]:.1f}일</span>
-            </div>
-        </div>
-        <div class="process-circle">온라인<br>판매개시</div>
-    </div>
-    ''',
-    unsafe_allow_html=True,
-)
-if selected_brand == "스파오" and (spao_register_header_cell or spao_photo_header_cell):
-    st.caption(
-        f"공홈등록 소요일 위치: {spao_register_header_cell} · "
-        f"숫자 {spao_register_count}개 평균"
+    brand_out_amt = sum_by_brand(df_inout_table, inout_out_amt_col)
+    sale_amt_col = inout_cum_sale_amt_col or inout_sale_amt_col
+    brand_sale_sty_qty = count_unique_style_with_amount_by_brand(
+        df_inout_table, inout_style_col, sale_amt_col, min_amount=1
     )
-if selected_brand == "스파오" and spao_photo_header_cell:
-    st.caption(
-        f"포토소요일 위치: {spao_photo_header_cell} · "
-        f"숫자 {spao_photo_count}개 평균"
+    brand_sale_sku_qty = count_unique_sku_with_amount_by_brand(
+        df_inout_table, inout_style_col, inout_color_col, sale_amt_col, min_amount=1
     )
-if selected_brand == "후아유" and whoau_handover_header_cell:
-    st.caption(
-        f"포토팀 상품인계 위치: {whoau_handover_header_cell} · "
-        f"숫자 {whoau_handover_count}개 평균"
-    )
-if selected_brand == "후아유" and whoau_shooting_header_cell:
-    st.caption(
-        f"촬영 소요일 위치: {whoau_shooting_header_cell} · "
-        f"숫자 {whoau_shooting_count}개 평균"
-    )
-if selected_brand == "후아유" and whoau_register_header_cell:
-    st.caption(
-        f"상품등록 소요일 위치: {whoau_register_header_cell} · "
-        f"숫자 {whoau_register_count}개 평균"
-    )
-if selected_brand == "클라비스" and clavis_handover_header_cell:
-    st.caption(
-        f"포토팀 상품인계 위치: {clavis_handover_header_cell} · "
-        f"숫자 {clavis_handover_count}개 평균"
-    )
-if selected_brand == "클라비스" and clavis_shooting_header_cell:
-    st.caption(
-        f"촬영 소요일 위치: {clavis_shooting_header_cell} · "
-        f"숫자 {clavis_shooting_count}개 평균"
-    )
-if selected_brand == "클라비스" and clavis_register_header_cell:
-    st.caption(
-        f"상품등록 소요일 위치: {clavis_register_header_cell} · "
-        f"숫자 {clavis_register_count}개 평균"
-    )
-if selected_brand == "미쏘" and mixxo_handover_header_cell:
-    st.caption(
-        f"포토팀 상품인계 위치: {mixxo_handover_header_cell} · "
-        f"숫자 {mixxo_handover_count}개 평균"
-    )
-if selected_brand == "미쏘" and mixxo_shooting_header_cell:
-    st.caption(
-        f"촬영 소요일 위치: {mixxo_shooting_header_cell} · "
-        f"숫자 {mixxo_shooting_count}개 평균"
-    )
-if selected_brand == "미쏘" and mixxo_register_header_cell:
-    st.caption(
-        f"상품등록 소요일 위치: {mixxo_register_header_cell} · "
-        f"숫자 {mixxo_register_count}개 평균"
-    )
-if selected_brand == "로엠" and roem_handover_header_cell:
-    st.caption(
-        f"포토팀 상품인계 위치: {roem_handover_header_cell} · "
-        f"숫자 {roem_handover_count}개 평균"
-    )
-if selected_brand == "로엠" and roem_shooting_header_cell:
-    st.caption(
-        f"촬영 소요일 위치: {roem_shooting_header_cell} · "
-        f"숫자 {roem_shooting_count}개 평균"
-    )
-if selected_brand == "로엠" and roem_register_header_cell:
-    st.caption(
-        f"상품등록 소요일 위치: {roem_register_header_cell} · "
-        f"숫자 {roem_register_count}개 평균"
-    )
-
-# 브랜드별 상품등록 모니터링 (상단 표)
-st.markdown("<div style='margin-top: 120px;'></div>", unsafe_allow_html=True)
-st.markdown("---")
-title_col, download_col = st.columns([8, 2])
-with title_col:
-    st.markdown('<div class="section-title">브랜드별 상품등록 모니터링</div>', unsafe_allow_html=True)
-monitor_columns = [
-    "브랜드",
-    "스타일수(입고상품 기준)",
-    "온라인 등록 스타일수",
-    "온라인등록율",
-    "평균 등록 소요일수",
-    "등록수",
-    "온라인등록율(전주대비)",
-    "합계",
-    "미분배(분배팀)",
-    "포토 미업로드(포토팀)",
-    "상품 미등록(온라인)",
-]
-# 스타일수(입고상품 기준): 위쪽 입출고 표와 동일한 brand_in_qty 사용(이미 위에서 입고액≥1 기준으로 계산됨)
-def format_monitor_num(value):
-    if value is None or pd.isna(value):
-        return "0"
-    try:
-        return f"{int(round(float(value))):,}"
-    except Exception:
-        return "0"
-
-def format_monitor_optional(value):
-    if value is None or pd.isna(value):
-        return ""
-    try:
-        if float(value) == 0:
-            return ""
-        return f"{int(round(float(value))):,}"
-    except Exception:
-        return ""
-
-def format_monitor_percent(value):
-    if value is None:
-        return ""
-    try:
-        return f"{int(round(float(value) * 100)):d}%"
-    except Exception:
-        return ""
-
-def format_monitor_days(value):
-    if value is None or pd.isna(value):
-        return ""
-    try:
-        return f"{float(value):.1f}"
-    except Exception:
-        return ""
-monitor_rows = []
-bu_labels = {label for label, _ in bu_groups}
-for bu_label, bu_brands in bu_groups:
-    monitor_rows.append({"브랜드": bu_label})
-    for brand in bu_brands:
-        monitor_rows.append({"브랜드": brand})
-monitor_df = pd.DataFrame(monitor_rows)
-for col in monitor_columns:
-    if col not in monitor_df.columns:
-        monitor_df[col] = ""
-style_count_by_brand = {}
-if "스타일수(입고상품 기준)" in monitor_df.columns:
-    def resolve_style_count(brand_name):
-        if brand_name in bu_labels:
-            brands = next((b for l, b in bu_groups if l == brand_name), [])
-            return sum(brand_in_qty.get(b, 0) for b in brands)
-        return brand_in_qty.get(brand_name, 0)
-    style_count_by_brand = {b: resolve_style_count(b) for b in monitor_df["브랜드"]}
-    monitor_df["스타일수(입고상품 기준)"] = monitor_df["브랜드"].map(
-        lambda b: format_monitor_num(style_count_by_brand.get(b, 0))
-    )
-out_style_count_by_brand = {}
-if "미분배(분배팀)" in monitor_df.columns and inout_style_col:
-    out_style_counts = count_unique_style_with_amount_by_brand(
-        df_inout_out_base,
-        inout_style_col,
-        inout_out_amt_col,
-        min_amount=1,
-    )
-    def resolve_out_style_count(brand_name):
-        if brand_name in bu_labels:
-            brands = next((b for l, b in bu_groups if l == brand_name), [])
-            return sum(out_style_counts.get(b, 0) for b in brands)
-        return out_style_counts.get(brand_name, 0)
-    out_style_count_by_brand = {b: resolve_out_style_count(b) for b in monitor_df["브랜드"]}
-    monitor_df["미분배(분배팀)"] = monitor_df["브랜드"].map(
-        lambda b: format_monitor_num(
-            max(style_count_by_brand.get(b, 0) - out_style_count_by_brand.get(b, 0), 0)
-        )
-    )
-    undist_hide_brands = {"미쏘", "로엠", "클라비스", "에블린", "슈펜"}
-    monitor_df.loc[
-        monitor_df["브랜드"].isin(undist_hide_brands),
-        "미분배(분배팀)",
-    ] = "-"
-if "온라인 등록 스타일수" in monitor_df.columns:
-    register_style_counts = {}
-    if spao_register_style_count is not None:
-        register_style_counts["스파오"] = spao_register_style_count
-    if whoau_register_style_count is not None:
-        register_style_counts["후아유"] = whoau_register_style_count
-    if clavis_register_style_count is not None:
-        register_style_counts["클라비스"] = clavis_register_style_count
-    if mixxo_register_style_count is not None:
-        register_style_counts["미쏘"] = mixxo_register_style_count
-    if roem_register_style_count is not None:
-        register_style_counts["로엠"] = roem_register_style_count
-    def has_online_register_data(brand_name):
-        if brand_name in bu_labels:
-            brands = next((b for l, b in bu_groups if l == brand_name), [])
-            return any(b in register_style_counts for b in brands)
-        return brand_name in register_style_counts
-    def resolve_register_style_count(brand_name):
-        if brand_name in bu_labels:
-            brands = next((b for l, b in bu_groups if l == brand_name), [])
-            return sum(register_style_counts.get(b, 0) for b in brands)
-        return register_style_counts.get(brand_name, 0)
-    register_count_by_brand = {b: resolve_register_style_count(b) for b in monitor_df["브랜드"]}
-    monitor_df["온라인 등록 스타일수"] = monitor_df["브랜드"].map(
-        lambda b: format_monitor_optional(register_count_by_brand.get(b, 0))
-    )
-if "합계" in monitor_df.columns:
-    def resolve_unregistered_total(brand_name):
-        if brand_name in bu_labels:
-            brands = next((b for l, b in bu_groups if l == brand_name), [])
-            return sum(
-                max(style_count_by_brand.get(b, 0) - register_count_by_brand.get(b, 0), 0)
-                for b in brands
-            )
-        return max(
-            style_count_by_brand.get(brand_name, 0) - register_count_by_brand.get(brand_name, 0),
-            0,
-        )
-    monitor_df["합계"] = monitor_df["브랜드"].map(
-        lambda b: format_monitor_num(resolve_unregistered_total(b))
-    )
-if "상품 미등록(온라인)" in monitor_df.columns:
-    unregistered_counts = {
-        "후아유": whoau_unregistered_online_count,
-        "스파오": spao_unregistered_online_count,
-        "클라비스": clavis_unregistered_online_count,
-        "미쏘": mixxo_unregistered_online_count,
-        "로엠": roem_unregistered_online_count,
-    }
-    def format_dash_if_no_register(brand_name, value):
-        if not has_online_register_data(brand_name):
-            return "-"
-        return format_monitor_optional(value)
-    def resolve_unregistered(brand_name):
-        if brand_name in bu_labels:
-            brands = next((b for l, b in bu_groups if l == brand_name), [])
-            return sum(unregistered_counts.get(b, 0) for b in brands)
-        return unregistered_counts.get(brand_name, 0)
-    monitor_df["상품 미등록(온라인)"] = monitor_df["브랜드"].map(
-        lambda b: format_dash_if_no_register(b, resolve_unregistered(b))
-    )
-if "포토 미업로드(포토팀)" in monitor_df.columns:
-    def resolve_photo_missing(brand_name):
-        if brand_name in bu_labels:
-            brands = next((b for l, b in bu_groups if l == brand_name), [])
-            total = sum(
-                max(style_count_by_brand.get(b, 0) - register_count_by_brand.get(b, 0), 0)
-                for b in brands
-            )
-            undist = sum(
-                max(style_count_by_brand.get(b, 0) - out_style_count_by_brand.get(b, 0), 0)
-                for b in brands
-            )
-            unregistered = sum(unregistered_counts.get(b, 0) for b in brands)
-            return max(total - (undist + unregistered), 0)
-        total = max(
-            style_count_by_brand.get(brand_name, 0) - register_count_by_brand.get(brand_name, 0), 0
-        )
-        undist = max(
-            style_count_by_brand.get(brand_name, 0) - out_style_count_by_brand.get(brand_name, 0), 0
-        )
-        unregistered = unregistered_counts.get(brand_name, 0)
-        return max(total - (undist + unregistered), 0)
-    monitor_df["포토 미업로드(포토팀)"] = monitor_df["브랜드"].map(
-        lambda b: format_dash_if_no_register(b, resolve_photo_missing(b))
-    )
-if "평균 등록 소요일수" in monitor_df.columns:
-    avg_days_by_brand = {}
-    if spao_register_avg_days is not None:
-        avg_days_by_brand["스파오"] = spao_register_avg_days
-    if whoau_register_avg_days is not None:
-        avg_days_by_brand["후아유"] = whoau_register_avg_days
-    if clavis_register_avg_days is not None:
-        avg_days_by_brand["클라비스"] = clavis_register_avg_days
-    if mixxo_register_avg_days is not None:
-        avg_days_by_brand["미쏘"] = mixxo_register_avg_days
-    if roem_register_avg_days is not None:
-        avg_days_by_brand["로엠"] = roem_register_avg_days
-    def resolve_avg_days(brand_name):
-        if brand_name in bu_labels:
-            brands = next((b for l, b in bu_groups if l == brand_name), [])
-            values = [avg_days_by_brand.get(b) for b in brands]
-            values = [v for v in values if v is not None and not pd.isna(v)]
-            if not values:
-                return None
-            return float(sum(values)) / len(values)
-        return avg_days_by_brand.get(brand_name)
-    monitor_df["평균 등록 소요일수"] = monitor_df["브랜드"].map(
-        lambda b: format_monitor_days(resolve_avg_days(b))
-    )
-register_rate_by_brand = {}
-if "온라인등록율" in monitor_df.columns:
-    def resolve_register_rate(brand_name):
-        style_count = style_count_by_brand.get(brand_name, 0)
-        register_count = register_count_by_brand.get(brand_name, 0)
-        if style_count and register_count is not None and register_count != 0:
-            return register_count / style_count
-        return None
-    register_rate_by_brand = {b: resolve_register_rate(b) for b in monitor_df["브랜드"]}
-    monitor_df["온라인등록율"] = monitor_df["브랜드"].map(
-        lambda b: format_monitor_percent(register_rate_by_brand.get(b))
-    )
-monitor_df = monitor_df[monitor_columns]
-def build_monitor_table_html(df, rate_by_brand):
-    """
-    (D) [상품등록 모니터링] HTML 테이블 생성 함수.
-
-    - Streamlit에서 `unsafe_allow_html=True`로 렌더링됩니다.
-    - 색상 점/툴팁 등 표시 로직이 포함되어 있어, UI/스타일 변경 시 이 함수부터 확인하면 됩니다.
-    """
-    # HTML 테이블 직접 렌더링(색상 점/툴팁 포함)
-    def safe_cell(val):
-        text = "" if val is None else str(val)
-        return text if text.strip() else "&nbsp;"
-    def build_rate_cell(brand_name, rate_text):
-        rate_val = rate_by_brand.get(brand_name)
-        if rate_val is None:
-            return safe_cell(rate_text)
-        if rate_val <= 0.8:
-            dot_class = "rate-red"
-        elif rate_val <= 0.9:
-            dot_class = "rate-yellow"
-        else:
-            dot_class = "rate-green"
-        tooltip = "(초록불) 90% 초과&#10;(노란불) 80% 초과&#10;(빨간불) 80% 이하"
-        return f"<span class='rate-cell' data-tooltip='{tooltip}'><span class='rate-dot {dot_class}'></span>{safe_cell(rate_text)}</span>"
-    def build_avg_days_cell(value_text):
-        tooltip = "(초록불) 3일 이하&#10;(노란불) 5일 이하&#10;(빨간불) 5일 초과"
-        dot_class = ""
+    brand_sale_amt = sum_by_brand(df_inout_table, inout_cum_sale_amt_col or inout_sale_amt_col)
+    
+    def format_table_num(value):
+        if value is None or pd.isna(value):
+            return "0"
         try:
-            num_val = float(str(value_text).replace(",", "").strip())
-            if num_val <= 3:
-                dot_class = "rate-green"
-            elif num_val <= 5:
-                dot_class = "rate-yellow"
-            else:
-                dot_class = "rate-red"
+            return f"{int(round(float(value))):,}"
         except Exception:
-            dot_class = ""
-        dot_html = f"<span class='rate-dot {dot_class}'></span>" if dot_class else ""
-        return f"<span class='avg-cell' data-tooltip='{tooltip}'>{dot_html}{safe_cell(value_text)}</span>"
-    header_top = (
-        "<tr>"
-        "<th rowspan='2'>브랜드</th>"
-        "<th class='group-head' colspan='4'>공통</th>"
-        "<th class='group-head' colspan='2'>전주대비</th>"
-        "<th class='group-head' colspan='4'>미등록현황</th>"
-        "</tr>"
-    )
-    header_bottom = (
-        "<tr>"
-        "<th>입고스타일수</th>"
-        "<th>온라인등록<br>스타일수</th>"
-        "<th><span class='rate-help' data-tooltip='(초록불) 90% 초과&#10;(노란불) 80% 초과&#10;(빨간불) 80% 이하'>온라인<br>등록율</span></th>"
-        "<th><span class='avg-help' data-tooltip='(온라인상품등록일 - 최초입고일)'>평균 등록 소요일수<br><span style='font-size:0.8rem; font-weight:500; color:#94a3b8;'>온라인상품등록일 - 최초입고일</span></span></th>"
-        "<th>등록수</th>"
-        "<th><span class='rate-help' data-tooltip='(초록불) 90% 초과&#10;(노란불) 80% 초과&#10;(빨간불) 80% 이하'>온라인등록율</span></th>"
-        "<th><span class='sum-help' data-tooltip='(입고스타일수 - 온라인등록스타일수)'>전체 미등록 스타일</span></th>"
-        "<th>미분배<br>(분배팀)</th>"
-        "<th>포토 미업로드<br>(포토팀)</th>"
-        "<th>상품 미등록<br>(온라인)</th>"
-        "</tr>"
-    )
-    body_rows = []
-    for _, row in df.iterrows():
-        row_class = "bu-row" if row.get("브랜드") in bu_labels else ""
-        cells = []
-        for col in monitor_columns:
-            if col == "등록율":
-                cells.append(build_rate_cell(row.get("브랜드"), row.get(col, "")))
-            elif col == "평균 등록 소요일수":
-                cells.append(build_avg_days_cell(row.get(col, "")))
-            else:
-                cells.append(safe_cell(row.get(col, "")))
-        body_rows.append(f"<tr class='{row_class}'>" + "".join(f"<td>{c}</td>" for c in cells) + "</tr>")
-    table_html = f"""
-    <style>
-        .monitor-table {{
-            width: 100%;
-            border-collapse: collapse;
-            background: #1e293b;
-            color: #f1f5f9;
-            border: 1px solid #334155;
-        }}
-        .monitor-table th, .monitor-table td {{
-            border: 1px solid #334155;
-            padding: 6px 8px;
-            text-align: center;
-            font-size: 0.95rem;
-        }}
-        .monitor-table thead th {{
-            background: #0f172a;
-            color: #f1f5f9;
-            font-weight: 700;
-        }}
-        .monitor-table .group-head {{
-            background: #111827;
-            color: #f1f5f9;
-            font-size: 1rem;
-        }}
-        .monitor-table tr.bu-row td {{
-            background-color: #d9f7ee;
-            color: #000000;
-            font-size: 1.15rem;
-            font-weight: 700;
-        }}
-        .monitor-table .rate-cell {{
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            justify-content: center;
-            position: relative;
-            cursor: help;
-        }}
-        .monitor-table .avg-cell {{
-            position: relative;
-            cursor: help;
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            justify-content: center;
-        }}
-        .monitor-table .rate-dot {{
-            width: 16px;
-            height: 16px;
-            border-radius: 50%;
-            display: inline-block;
-        }}
-        .monitor-table .rate-red {{ background: #ef4444; }}
-        .monitor-table .rate-yellow {{ background: #f59e0b; }}
-        .monitor-table .rate-green {{ background: #22c55e; }}
-        .monitor-table .rate-cell::after {{
-            content: "";
-            position: absolute;
-            opacity: 0;
-            pointer-events: none;
-            transition: opacity 0.15s ease-in-out;
-            left: 50%;
-            transform: translateX(-50%);
-            bottom: calc(100% + 6px);
-            white-space: pre;
-            word-break: keep-all;
-            width: max-content;
-            max-width: none;
-            background: #111827;
-            color: #f1f5f9;
-            padding: 6px 8px;
-            border-radius: 6px;
-            font-size: 0.85rem;
-            text-align: left;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
-            z-index: 20;
-        }}
-        .monitor-table .rate-cell:hover::after {{
-            content: attr(data-tooltip);
-            opacity: 1;
-        }}
-        .monitor-table .rate-help {{
-            position: relative;
-            display: inline-block;
-            cursor: help;
-        }}
-        .monitor-table .avg-help {{
-            position: relative;
-            display: inline-block;
-            cursor: help;
-        }}
-        .monitor-table .sum-help {{
-            position: relative;
-            display: inline-block;
-            cursor: help;
-        }}
-        .monitor-table .rate-help::after {{
-            content: "";
-            position: absolute;
-            opacity: 0;
-            pointer-events: none;
-            transition: opacity 0.15s ease-in-out;
-            left: 50%;
-            transform: translateX(-50%);
-            bottom: calc(100% + 6px);
-            white-space: pre;
-            word-break: keep-all;
-            width: max-content;
-            max-width: none;
-            background: #111827;
-            color: #f1f5f9;
-            padding: 6px 8px;
-            border-radius: 6px;
-            font-size: 0.85rem;
-            text-align: left;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
-            z-index: 20;
-        }}
-        .monitor-table .rate-help:hover::after {{
-            content: attr(data-tooltip);
-            opacity: 1;
-        }}
-        .monitor-table .avg-cell::after {{
-            content: "";
-            position: absolute;
-            opacity: 0;
-            pointer-events: none;
-            transition: opacity 0.15s ease-in-out;
-            left: 50%;
-            transform: translateX(-50%);
-            bottom: calc(100% + 6px);
-            background: #111827;
-            color: #f1f5f9;
-            padding: 6px 8px;
-            border-radius: 6px;
-            font-size: 0.85rem;
-            text-align: left;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
-            z-index: 20;
-            white-space: pre;
-            word-break: keep-all;
-            width: max-content;
-            max-width: none;
-        }}
-        .monitor-table .avg-cell:hover::after {{
-            content: attr(data-tooltip);
-            opacity: 1;
-        }}
-        .monitor-table .avg-help::after {{
-            content: "";
-            position: absolute;
-            opacity: 0;
-            pointer-events: none;
-            transition: opacity 0.15s ease-in-out;
-            left: 50%;
-            transform: translateX(-50%);
-            bottom: calc(100% + 6px);
-            background: #111827;
-            color: #f1f5f9;
-            padding: 6px 8px;
-            border-radius: 6px;
-            font-size: 0.85rem;
-            text-align: left;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
-            z-index: 20;
-            white-space: pre;
-            word-break: keep-all;
-            width: max-content;
-            max-width: none;
-        }}
-        .monitor-table .avg-help:hover::after {{
-            content: attr(data-tooltip);
-            opacity: 1;
-        }}
-        .monitor-table .sum-help::after {{
-            content: "";
-            position: absolute;
-            opacity: 0;
-            pointer-events: none;
-            transition: opacity 0.15s ease-in-out;
-            left: 50%;
-            transform: translateX(-50%);
-            bottom: calc(100% + 6px);
-            background: #111827;
-            color: #f1f5f9;
-            padding: 6px 8px;
-            border-radius: 6px;
-            font-size: 0.85rem;
-            text-align: left;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
-            z-index: 20;
-            white-space: pre;
-            word-break: keep-all;
-            width: max-content;
-            max-width: none;
-        }}
-        .monitor-table .sum-help:hover::after {{
-            content: attr(data-tooltip);
-            opacity: 1;
-        }}
-    </style>
-    <table class="monitor-table">
-        <thead>{header_top}{header_bottom}</thead>
-        <tbody>{''.join(body_rows)}</tbody>
-    </table>
-    """
-    return table_html
-
-st.markdown(build_monitor_table_html(monitor_df, register_rate_by_brand), unsafe_allow_html=True)
-
-# 브랜드별 상품등록 모니터링 다운로드
-def to_xlsx_bytes_monitor(df):
-    buffer = BytesIO()
-    export_df = df[monitor_columns] if all(c in df.columns for c in monitor_columns) else df
-    export_df.to_excel(buffer, index=False, engine="openpyxl")
-    return buffer.getvalue()
-
-monitor_xlsx_data = to_xlsx_bytes_monitor(monitor_df)
-with download_col:
-    st.markdown("<div class='download-right-marker'></div>", unsafe_allow_html=True)
-    monitor_download_ts = datetime.now().strftime("%Y%m%d_%H%M")
-    st.download_button(
-        label="엑셀 다운로드",
-        data=monitor_xlsx_data,
-        file_name=f"브랜드별 상품등록 모니터링_{monitor_download_ts}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        key="download_monitor_xlsx",
-    )
-
-# 브랜드 상세(입출고 모니터링)
-st.markdown('<div style="height:40px;"></div>', unsafe_allow_html=True)
-st.markdown('<div class="section-title">브랜드별 입출고 모니터링</div>', unsafe_allow_html=True)
-
-unit_left, _unit_right = st.columns([6, 5])
-
-# 브랜드 상세 토글 (STY/SKU) - QR 토글과 동일 스타일
-with unit_left:
-    sty_toggle_val = st.session_state.get("sty_toggle", True)
-    sty_label = "STY 기준 통계" if sty_toggle_val else "SKU 기준 통계"
-    st.markdown(f'<div class="unit-toggle-label">{sty_label}</div>', unsafe_allow_html=True)
-    sty_toggle = st.toggle("", value=sty_toggle_val, key="sty_toggle", label_visibility="collapsed")
-
-# 브랜드 상세 테이블 컬럼(STY 또는 SKU)
-if sty_toggle:
-    table_columns = [
-        "발주 STY수", "발주액", "입고 STY수", "입고액",
-        "출고 STY수", "출고액", "판매 STY수", "판매액"
-    ]
-else:
-    table_columns = [
-        "발주 SKU수", "발주액", "입고 SKU수", "입고액",
-        "출고 SKU수", "출고액", "판매 SKU수", "판매액"
-    ]
-brand_rows = []
-brand_order_qty = count_unique_style_with_amount_by_brand(
-    df_inout_order_base, inout_style_col, inout_order_qty_col, min_amount=1
-)
-brand_order_sku_qty = count_unique_sku_with_amount_by_brand(
-    df_inout_order_base,
-    inout_style_col,
-    inout_color_col,
-    inout_order_qty_col,
-    min_amount=1,
-)
-brand_order_amt = sum_by_brand(df_inout_order_base, inout_order_amt_col)
-# brand_in_qty는 위쪽에서 입고액≥1 기준으로 이미 계산됨(입출고 표·모니터 표 공통)
-brand_in_sku_qty = count_unique_sku_with_amount_by_brand(
-    df_inout_in_base,
-    inout_style_col,
-    inout_color_col,
-    inout_cum_in_amt_col or inout_in_amt_col,
-    min_amount=1,
-)
-brand_in_amt = sum_by_brand(df_inout_in_base, inout_cum_in_amt_col or inout_in_amt_col)
-brand_out_qty = count_unique_style_by_brand(df_inout_table, inout_style_col)
-brand_out_sku_qty = count_unique_sku_with_amount_by_brand(
-    df_inout_table, inout_style_col, inout_color_col, inout_out_amt_col, min_amount=1
-)
-brand_out_amt = sum_by_brand(df_inout_table, inout_out_amt_col)
-sale_amt_col = inout_cum_sale_amt_col or inout_sale_amt_col
-brand_sale_sty_qty = count_unique_style_with_amount_by_brand(
-    df_inout_table, inout_style_col, sale_amt_col, min_amount=1
-)
-brand_sale_sku_qty = count_unique_sku_with_amount_by_brand(
-    df_inout_table, inout_style_col, inout_color_col, sale_amt_col, min_amount=1
-)
-brand_sale_amt = sum_by_brand(df_inout_table, inout_cum_sale_amt_col or inout_sale_amt_col)
-
-def format_table_num(value):
-    if value is None or pd.isna(value):
-        return "0"
-    try:
-        return f"{int(round(float(value))):,}"
-    except Exception:
-        return "0"
-
-def format_amount_eok(value):
-    if value is None or pd.isna(value):
-        return "0 억 원"
-    try:
-        return f"{float(value) / 100000000:,.0f} 억 원"
-    except Exception:
-        return "0 억 원"
-
-def sum_by_brands(data_dict, brands):
-    return sum(data_dict.get(b, 0) for b in brands)
-
-def build_row(label, brands=None):
-    row = {"브랜드": label}
-    for col in table_columns:
-        row[col] = "0"
-    if brands is None:
-        return row
-    if "발주 STY수" in row:
-        row["발주 STY수"] = format_table_num(sum_by_brands(brand_order_qty, brands))
-    if "발주 SKU수" in row:
-        row["발주 SKU수"] = format_table_num(sum_by_brands(brand_order_sku_qty, brands))
-    if "발주액" in row:
-        row["발주액"] = format_amount_eok(sum_by_brands(brand_order_amt, brands))
-    if "입고 STY수" in row:
-        row["입고 STY수"] = format_table_num(sum_by_brands(brand_in_qty, brands))
-    if "입고 SKU수" in row:
-        row["입고 SKU수"] = format_table_num(sum_by_brands(brand_in_sku_qty, brands))
-    if "입고액" in row:
-        row["입고액"] = format_amount_eok(sum_by_brands(brand_in_amt, brands))
-    if "출고 STY수" in row:
-        row["출고 STY수"] = format_table_num(sum_by_brands(brand_out_qty, brands))
-    if "출고 SKU수" in row:
-        row["출고 SKU수"] = format_table_num(sum_by_brands(brand_out_sku_qty, brands))
-    if "출고액" in row:
-        row["출고액"] = format_amount_eok(sum_by_brands(brand_out_amt, brands))
-    if "판매 STY수" in row:
-        row["판매 STY수"] = format_table_num(sum_by_brands(brand_sale_sty_qty, brands))
-    if "판매 SKU수" in row:
-        row["판매 SKU수"] = format_table_num(sum_by_brands(brand_sale_sku_qty, brands))
-    if "판매액" in row:
-        row["판매액"] = format_amount_eok(sum_by_brands(brand_sale_amt, brands))
-    return row
-
-def build_season_label_series(df):
-    # 시즌 라벨 생성(연도+시즌; 미지정 처리)
-    if df is None or df.empty:
-        return pd.Series(dtype="object")
-    if inout_season_col and inout_season_col in df.columns:
-        season_series = df[inout_season_col].astype(str).str.strip()
-    else:
-        season_series = pd.Series(["미지정"] * len(df), index=df.index)
-    season_series = season_series.replace(r"^\s*$", "미지정", regex=True)
-    season_series = season_series.str.replace("시즌", "", regex=False).str.strip()
-    if inout_year_col and inout_year_col in df.columns:
-        year_series = df[inout_year_col].astype(str).str.strip().replace(r"^\s*$", "", regex=True)
-        label = (year_series + " " + season_series).str.strip()
-        label = label.where(label.str.strip().ne(""), season_series)
-        return label
-    return season_series
-
-def build_season_detail_table(base_df, brand_name, use_sty, order_base_df=None, in_base_df=None):
-    # 브랜드별 시즌 상세 행 생성(발주/입고/출고/판매)
-    columns = ["시즌"] + table_columns
-    if base_df is None or base_df.empty:
-        return pd.DataFrame(columns=columns)
-    if inout_brand_col is None or inout_brand_col not in base_df.columns:
-        return pd.DataFrame(columns=columns)
-    brand_series = base_df[inout_brand_col].astype(str).str.replace(" ", "").str.strip()
-    target_brand = str(brand_name).replace(" ", "").strip()
-    df_brand = base_df[brand_series == target_brand]
-    order_df = order_base_df if order_base_df is not None else base_df
-    in_df = in_base_df if in_base_df is not None else base_df
-    order_brand_series = order_df[inout_brand_col].astype(str).str.replace(" ", "").str.strip()
-    order_brand_df = order_df[order_brand_series == target_brand]
-    in_brand_series = in_df[inout_brand_col].astype(str).str.replace(" ", "").str.strip()
-    in_brand_df = in_df[in_brand_series == target_brand]
-    if df_brand.empty:
-        return pd.DataFrame(columns=columns)
-    season_labels = build_season_label_series(df_brand)
-    order_season_labels = build_season_label_series(order_brand_df) if not order_brand_df.empty else season_labels
-    in_season_labels = build_season_label_series(in_brand_df) if not in_brand_df.empty else season_labels
-    rows = []
-    for season_label, df_season in df_brand.groupby(season_labels):
-        order_season = (
-            order_brand_df[order_season_labels == season_label]
-            if not order_brand_df.empty
-            else df_season
-        )
-        in_season = (
-            in_brand_df[in_season_labels == season_label]
-            if not in_brand_df.empty
-            else df_season
-        )
-        row = {"시즌": season_label}
-        if use_sty:
-            row["발주 STY수"] = format_table_num(
-                count_unique_style_with_amount(
-                    order_season, inout_style_col, inout_order_qty_col, min_amount=1
-                )
-            )
-            row["입고 STY수"] = format_table_num(
-                count_unique_style_with_amount(
-                    in_season,
-                    inout_style_col,
-                    inout_cum_in_amt_col or inout_in_amt_col,
-                    min_amount=1,
-                )
-            )
-            row["출고 STY수"] = format_table_num(
-                count_unique_style_with_amount(df_season, inout_style_col, inout_out_amt_col, min_amount=1)
-            )
-            row["판매 STY수"] = format_table_num(
-                count_unique_style_with_amount(
-                    df_season,
-                    inout_style_col,
-                    inout_cum_sale_amt_col or inout_sale_amt_col,
-                    min_amount=1,
-                )
-            )
-        else:
-            row["발주 SKU수"] = format_table_num(
-                count_unique_sku_with_amount(
-                    order_season, inout_style_col, inout_color_col, inout_order_qty_col, min_amount=1
-                )
-            )
-            row["입고 SKU수"] = format_table_num(
-                count_unique_sku_with_amount(
-                    in_season,
-                    inout_style_col,
-                    inout_color_col,
-                    inout_cum_in_amt_col or inout_in_amt_col,
-                    min_amount=1,
-                )
-            )
-            row["출고 SKU수"] = format_table_num(
-                count_unique_sku_with_amount(df_season, inout_style_col, inout_color_col, inout_out_amt_col, min_amount=1)
-            )
-            row["판매 SKU수"] = format_table_num(
-                count_unique_sku_with_amount(
-                    df_season,
-                    inout_style_col,
-                    inout_color_col,
-                    inout_cum_sale_amt_col or inout_sale_amt_col,
-                    min_amount=1,
-                )
-            )
-        row["발주액"] = format_amount_eok(safe_sum(order_season, inout_order_amt_col))
-        row["입고액"] = format_amount_eok(safe_sum(in_season, inout_cum_in_amt_col or inout_in_amt_col))
-        row["출고액"] = format_amount_eok(safe_sum(df_season, inout_out_amt_col))
-        # 판매수는 STY/SKU 기준으로 계산되어 위에서 채움
-        row["판매액"] = format_amount_eok(safe_sum(df_season, inout_cum_sale_amt_col or inout_sale_amt_col))
-        rows.append(row)
-    if not rows:
-        return pd.DataFrame(columns=columns)
-    return pd.DataFrame(rows)[columns]
-
-def build_brand_season_table_html(display_df, base_df, use_sty, order_base_df=None, in_base_df=None):
-    """
-    (D) [입출고 모니터링] 브랜드 행 클릭 → 시즌 상세 토글 HTML 테이블 생성.
-
-    - 브랜드/BU 행 + 시즌 상세 행을 함께 생성합니다.
-    - HTML 이스케이프는 `html_lib.escape()`로 처리합니다.
-    """
-    # 브랜드 행 클릭 시 시즌 행 토글되는 HTML 테이블 생성
-    cols = ["브랜드"] + table_columns
-    header_cells = "".join(
-        f"<th>{html_lib.escape(str(c))}</th>" for c in cols
-    )
-    body_rows = []
-    row_count = 0
-    for _, row in display_df.iterrows():
-        brand_name = str(row.get("브랜드", "")).strip()
-        is_bu = brand_name in bu_labels
-        values = [brand_name] + [row.get(c, "") for c in table_columns]
-        if is_bu:
-            cell_html = "".join(
-                f"<td>{html_lib.escape(str(v))}</td>" for v in values
-            )
-            body_rows.append(f"<tr class='bu-row'>{cell_html}</tr>")
-            row_count += 1
-            continue
-        brand_id = f"brand-{abs(hash(brand_name))}"
-        brand_cell = (
-            "<td class='brand-cell'>"
-            f"<button class='brand-toggle' data-target='{brand_id}' aria-expanded='false'>"
-            f"<span class='label'>{html_lib.escape(brand_name)}</span>"
-            "<span class='caret'>▽</span>"
-            "</button>"
-            "</td>"
-        )
-        other_cells = "".join(
-            f"<td>{html_lib.escape(str(v))}</td>" for v in values[1:]
-        )
-        cell_html = brand_cell + other_cells
-        if is_bu:
-            body_rows.append(f"<tr class='bu-row'>{cell_html}</tr>")
-            row_count += 1
-            continue
-        body_rows.append(f"<tr class='brand-row'>{cell_html}</tr>")
-        row_count += 1
-        season_df = build_season_detail_table(
-            base_df,
-            brand_name,
-            use_sty,
-            order_base_df=order_base_df,
-            in_base_df=in_base_df,
-        )
-        if season_df is not None and not season_df.empty:
-            for _, srow in season_df.iterrows():
-                season_label = str(srow.get("시즌", "")).strip()
-                season_values = [f"└ {season_label}"] + [
-                    srow.get(c, "") for c in table_columns
-                ]
-                season_cells = "".join(
-                    f"<td>{html_lib.escape(str(v))}</td>" for v in season_values
-                )
-                body_rows.append(
-                    f"<tr class='season-row' data-parent='{brand_id}'>{season_cells}</tr>"
-                )
-                row_count += 1
-    table_html = f"""
-    <style>
-        .brand-expand-table {{
-            width: 100%;
-            border: 1px solid #334155;
-            border-radius: 8px;
-            overflow: hidden;
-            background: #1e293b;
-            color: #f1f5f9;
-            margin-top: 0.5rem;
-        }}
-        .brand-expand-table table {{
-            width: 100%;
-            border-collapse: collapse;
-        }}
-        .brand-expand-table th, .brand-expand-table td {{
-            border: 1px solid #334155;
-            padding: 6px 8px;
-            text-align: center;
-            font-size: 0.95rem;
-        }}
-        .brand-expand-table thead th {{
-            background: #0f172a;
-            color: #f1f5f9;
-            font-weight: 700;
-            font-size: 1rem;
-        }}
-        .brand-row {{
-            background: #111827;
-        }}
-        .brand-cell {{
-            text-align: left;
-        }}
-        .brand-toggle {{
-            all: unset;
-            cursor: pointer;
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            font-weight: 700;
-            color: #f1f5f9;
-        }}
-        .brand-toggle .caret {{
-            display: inline-block;
-            transition: transform 0.15s ease-in-out;
-            color: #94a3b8;
-            font-size: 0.9rem;
-        }}
-        .brand-toggle[aria-expanded="true"] .caret {{
-            transform: rotate(90deg);
-        }}
-        .brand-row.bu-row {{
-            background-color: #d9f7ee;
-            color: #000000;
-            font-size: 1.15rem;
-            font-weight: 700;
-        }}
-        .season-row td {{
-            background: #0f172a;
-            font-size: 0.9rem;
-            color: #cbd5e1;
-        }}
-        .season-row td:first-child {{
-            text-align: left;
-            padding-left: 18px;
-        }}
-    </style>
-    <div class="brand-expand-table">
-        <table>
-            <thead><tr>{header_cells}</tr></thead>
-            <tbody>{''.join(body_rows)}</tbody>
-        </table>
-    </div>
-    <script>
-        (function() {{
-            const rows = document.querySelectorAll(".season-row");
-            rows.forEach(r => r.style.display = "none");
-            document.querySelectorAll(".brand-toggle").forEach(btn => {{
-                btn.addEventListener("click", () => {{
-                    const target = btn.getAttribute("data-target");
-                    const expanded = btn.getAttribute("aria-expanded") === "true";
-                    btn.setAttribute("aria-expanded", expanded ? "false" : "true");
-                    document.querySelectorAll(`.season-row[data-parent='${{target}}']`)
-                        .forEach(r => r.style.display = expanded ? "none" : "table-row");
-                }});
-            }});
-        }})();
-    </script>
-    """
-    return table_html, row_count
-
-for bu_label, bu_brands in bu_groups:
-    brand_rows.append(build_row(bu_label, bu_brands))
-    for brand in bu_brands:
-        row = build_row(brand)
+            return "0"
+    
+    def format_amount_eok(value):
+        if value is None or pd.isna(value):
+            return "0 억 원"
+        try:
+            return f"{float(value) / 100000000:,.0f} 억 원"
+        except Exception:
+            return "0 억 원"
+    
+    def sum_by_brands(data_dict, brands):
+        return sum(data_dict.get(b, 0) for b in brands)
+    
+    def build_row(label, brands=None):
+        row = {"브랜드": label}
+        for col in table_columns:
+            row[col] = "0"
+        if brands is None:
+            return row
         if "발주 STY수" in row:
-            row["발주 STY수"] = format_table_num(brand_order_qty.get(brand, 0))
+            row["발주 STY수"] = format_table_num(sum_by_brands(brand_order_qty, brands))
         if "발주 SKU수" in row:
-            row["발주 SKU수"] = format_table_num(brand_order_sku_qty.get(brand, 0))
+            row["발주 SKU수"] = format_table_num(sum_by_brands(brand_order_sku_qty, brands))
         if "발주액" in row:
-            row["발주액"] = format_amount_eok(brand_order_amt.get(brand, 0))
+            row["발주액"] = format_amount_eok(sum_by_brands(brand_order_amt, brands))
         if "입고 STY수" in row:
-            row["입고 STY수"] = format_table_num(brand_in_qty.get(brand, 0))
+            row["입고 STY수"] = format_table_num(sum_by_brands(brand_in_qty, brands))
         if "입고 SKU수" in row:
-            row["입고 SKU수"] = format_table_num(brand_in_sku_qty.get(brand, 0))
+            row["입고 SKU수"] = format_table_num(sum_by_brands(brand_in_sku_qty, brands))
         if "입고액" in row:
-            row["입고액"] = format_amount_eok(brand_in_amt.get(brand, 0))
+            row["입고액"] = format_amount_eok(sum_by_brands(brand_in_amt, brands))
         if "출고 STY수" in row:
-            row["출고 STY수"] = format_table_num(brand_out_qty.get(brand, 0))
+            row["출고 STY수"] = format_table_num(sum_by_brands(brand_out_qty, brands))
         if "출고 SKU수" in row:
-            row["출고 SKU수"] = format_table_num(brand_out_sku_qty.get(brand, 0))
+            row["출고 SKU수"] = format_table_num(sum_by_brands(brand_out_sku_qty, brands))
         if "출고액" in row:
-            row["출고액"] = format_amount_eok(brand_out_amt.get(brand, 0))
+            row["출고액"] = format_amount_eok(sum_by_brands(brand_out_amt, brands))
         if "판매 STY수" in row:
-            row["판매 STY수"] = format_table_num(brand_sale_sty_qty.get(brand, 0))
+            row["판매 STY수"] = format_table_num(sum_by_brands(brand_sale_sty_qty, brands))
         if "판매 SKU수" in row:
-            row["판매 SKU수"] = format_table_num(brand_sale_sku_qty.get(brand, 0))
+            row["판매 SKU수"] = format_table_num(sum_by_brands(brand_sale_sku_qty, brands))
         if "판매액" in row:
-            row["판매액"] = format_amount_eok(brand_sale_amt.get(brand, 0))
-        brand_rows.append(row)
+            row["판매액"] = format_amount_eok(sum_by_brands(brand_sale_amt, brands))
+        return row
+    
+    def build_season_label_series(df):
+        # 시즌 라벨 생성(연도+시즌; 미지정 처리)
+        if df is None or df.empty:
+            return pd.Series(dtype="object")
+        if inout_season_col and inout_season_col in df.columns:
+            season_series = df[inout_season_col].astype(str).str.strip()
+        else:
+            season_series = pd.Series(["미지정"] * len(df), index=df.index)
+        season_series = season_series.replace(r"^\s*$", "미지정", regex=True)
+        season_series = season_series.str.replace("시즌", "", regex=False).str.strip()
+        if inout_year_col and inout_year_col in df.columns:
+            year_series = df[inout_year_col].astype(str).str.strip().replace(r"^\s*$", "", regex=True)
+            label = (year_series + " " + season_series).str.strip()
+            label = label.where(label.str.strip().ne(""), season_series)
+            return label
+        return season_series
+    
+    def build_season_detail_table(base_df, brand_name, use_sty, order_base_df=None, in_base_df=None):
+        # 브랜드별 시즌 상세 행 생성(발주/입고/출고/판매)
+        columns = ["시즌"] + table_columns
+        if base_df is None or base_df.empty:
+            return pd.DataFrame(columns=columns)
+        if inout_brand_col is None or inout_brand_col not in base_df.columns:
+            return pd.DataFrame(columns=columns)
+        brand_series = base_df[inout_brand_col].astype(str).str.replace(" ", "").str.strip()
+        target_brand = str(brand_name).replace(" ", "").strip()
+        df_brand = base_df[brand_series == target_brand]
+        order_df = order_base_df if order_base_df is not None else base_df
+        in_df = in_base_df if in_base_df is not None else base_df
+        order_brand_series = order_df[inout_brand_col].astype(str).str.replace(" ", "").str.strip()
+        order_brand_df = order_df[order_brand_series == target_brand]
+        in_brand_series = in_df[inout_brand_col].astype(str).str.replace(" ", "").str.strip()
+        in_brand_df = in_df[in_brand_series == target_brand]
+        if df_brand.empty:
+            return pd.DataFrame(columns=columns)
+        season_labels = build_season_label_series(df_brand)
+        order_season_labels = build_season_label_series(order_brand_df) if not order_brand_df.empty else season_labels
+        in_season_labels = build_season_label_series(in_brand_df) if not in_brand_df.empty else season_labels
+        rows = []
+        for season_label, df_season in df_brand.groupby(season_labels):
+            order_season = (
+                order_brand_df[order_season_labels == season_label]
+                if not order_brand_df.empty
+                else df_season
+            )
+            in_season = (
+                in_brand_df[in_season_labels == season_label]
+                if not in_brand_df.empty
+                else df_season
+            )
+            row = {"시즌": season_label}
+            if use_sty:
+                row["발주 STY수"] = format_table_num(
+                    count_unique_style_with_amount(
+                        order_season, inout_style_col, inout_order_qty_col, min_amount=1
+                    )
+                )
+                row["입고 STY수"] = format_table_num(
+                    count_unique_style_with_amount(
+                        in_season,
+                        inout_style_col,
+                        inout_cum_in_amt_col or inout_in_amt_col,
+                        min_amount=1,
+                    )
+                )
+                row["출고 STY수"] = format_table_num(
+                    count_unique_style_with_amount(df_season, inout_style_col, inout_out_amt_col, min_amount=1)
+                )
+                row["판매 STY수"] = format_table_num(
+                    count_unique_style_with_amount(
+                        df_season,
+                        inout_style_col,
+                        inout_cum_sale_amt_col or inout_sale_amt_col,
+                        min_amount=1,
+                    )
+                )
+            else:
+                row["발주 SKU수"] = format_table_num(
+                    count_unique_sku_with_amount(
+                        order_season, inout_style_col, inout_color_col, inout_order_qty_col, min_amount=1
+                    )
+                )
+                row["입고 SKU수"] = format_table_num(
+                    count_unique_sku_with_amount(
+                        in_season,
+                        inout_style_col,
+                        inout_color_col,
+                        inout_cum_in_amt_col or inout_in_amt_col,
+                        min_amount=1,
+                    )
+                )
+                row["출고 SKU수"] = format_table_num(
+                    count_unique_sku_with_amount(df_season, inout_style_col, inout_color_col, inout_out_amt_col, min_amount=1)
+                )
+                row["판매 SKU수"] = format_table_num(
+                    count_unique_sku_with_amount(
+                        df_season,
+                        inout_style_col,
+                        inout_color_col,
+                        inout_cum_sale_amt_col or inout_sale_amt_col,
+                        min_amount=1,
+                    )
+                )
+            row["발주액"] = format_amount_eok(safe_sum(order_season, inout_order_amt_col))
+            row["입고액"] = format_amount_eok(safe_sum(in_season, inout_cum_in_amt_col or inout_in_amt_col))
+            row["출고액"] = format_amount_eok(safe_sum(df_season, inout_out_amt_col))
+            # 판매수는 STY/SKU 기준으로 계산되어 위에서 채움
+            row["판매액"] = format_amount_eok(safe_sum(df_season, inout_cum_sale_amt_col or inout_sale_amt_col))
+            rows.append(row)
+        if not rows:
+            return pd.DataFrame(columns=columns)
+        return pd.DataFrame(rows)[columns]
+    
+    def build_brand_season_table_html(display_df, base_df, use_sty, order_base_df=None, in_base_df=None):
+        """
+        (D) [입출고 모니터링] 브랜드 행 클릭 → 시즌 상세 토글 HTML 테이블 생성.
+    
+        - 브랜드/BU 행 + 시즌 상세 행을 함께 생성합니다.
+        - HTML 이스케이프는 `html_lib.escape()`로 처리합니다.
+        """
+        # 브랜드 행 클릭 시 시즌 행 토글되는 HTML 테이블 생성
+        cols = ["브랜드"] + table_columns
+        header_cells = "".join(
+            f"<th>{html_lib.escape(str(c))}</th>" for c in cols
+        )
+        body_rows = []
+        row_count = 0
+        for _, row in display_df.iterrows():
+            brand_name = str(row.get("브랜드", "")).strip()
+            is_bu = brand_name in bu_labels
+            values = [brand_name] + [row.get(c, "") for c in table_columns]
+            if is_bu:
+                cell_html = "".join(
+                    f"<td>{html_lib.escape(str(v))}</td>" for v in values
+                )
+                body_rows.append(f"<tr class='bu-row'>{cell_html}</tr>")
+                row_count += 1
+                continue
+            brand_id = f"brand-{abs(hash(brand_name))}"
+            brand_cell = (
+                "<td class='brand-cell'>"
+                f"<button class='brand-toggle' data-target='{brand_id}' aria-expanded='false'>"
+                f"<span class='label'>{html_lib.escape(brand_name)}</span>"
+                "<span class='caret'>▽</span>"
+                "</button>"
+                "</td>"
+            )
+            other_cells = "".join(
+                f"<td>{html_lib.escape(str(v))}</td>" for v in values[1:]
+            )
+            cell_html = brand_cell + other_cells
+            if is_bu:
+                body_rows.append(f"<tr class='bu-row'>{cell_html}</tr>")
+                row_count += 1
+                continue
+            body_rows.append(f"<tr class='brand-row'>{cell_html}</tr>")
+            row_count += 1
+            season_df = build_season_detail_table(
+                base_df,
+                brand_name,
+                use_sty,
+                order_base_df=order_base_df,
+                in_base_df=in_base_df,
+            )
+            if season_df is not None and not season_df.empty:
+                for _, srow in season_df.iterrows():
+                    season_label = str(srow.get("시즌", "")).strip()
+                    season_values = [f"└ {season_label}"] + [
+                        srow.get(c, "") for c in table_columns
+                    ]
+                    season_cells = "".join(
+                        f"<td>{html_lib.escape(str(v))}</td>" for v in season_values
+                    )
+                    body_rows.append(
+                        f"<tr class='season-row' data-parent='{brand_id}'>{season_cells}</tr>"
+                    )
+                    row_count += 1
+        table_html = f"""
+        <style>
+            .brand-expand-table {{
+                width: 100%;
+                border: 1px solid #334155;
+                border-radius: 8px;
+                overflow: hidden;
+                background: #1e293b;
+                color: #f1f5f9;
+                margin-top: 0.5rem;
+            }}
+            .brand-expand-table table {{
+                width: 100%;
+                border-collapse: collapse;
+            }}
+            .brand-expand-table th, .brand-expand-table td {{
+                border: 1px solid #334155;
+                padding: 6px 8px;
+                text-align: center;
+                font-size: 0.95rem;
+            }}
+            .brand-expand-table thead th {{
+                background: #0f172a;
+                color: #f1f5f9;
+                font-weight: 700;
+                font-size: 1rem;
+            }}
+            .brand-row {{
+                background: #111827;
+            }}
+            .brand-cell {{
+                text-align: left;
+            }}
+            .brand-toggle {{
+                all: unset;
+                cursor: pointer;
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+                font-weight: 700;
+                color: #f1f5f9;
+            }}
+            .brand-toggle .caret {{
+                display: inline-block;
+                transition: transform 0.15s ease-in-out;
+                color: #94a3b8;
+                font-size: 0.9rem;
+            }}
+            .brand-toggle[aria-expanded="true"] .caret {{
+                transform: rotate(90deg);
+            }}
+            .brand-row.bu-row {{
+                background-color: #d9f7ee;
+                color: #000000;
+                font-size: 1.15rem;
+                font-weight: 700;
+            }}
+            .season-row td {{
+                background: #0f172a;
+                font-size: 0.9rem;
+                color: #cbd5e1;
+            }}
+            .season-row td:first-child {{
+                text-align: left;
+                padding-left: 18px;
+            }}
+        </style>
+        <div class="brand-expand-table">
+            <table>
+                <thead><tr>{header_cells}</tr></thead>
+                <tbody>{''.join(body_rows)}</tbody>
+            </table>
+        </div>
+        <script>
+            (function() {{
+                const rows = document.querySelectorAll(".season-row");
+                rows.forEach(r => r.style.display = "none");
+                document.querySelectorAll(".brand-toggle").forEach(btn => {{
+                    btn.addEventListener("click", () => {{
+                        const target = btn.getAttribute("data-target");
+                        const expanded = btn.getAttribute("aria-expanded") === "true";
+                        btn.setAttribute("aria-expanded", expanded ? "false" : "true");
+                        document.querySelectorAll(`.season-row[data-parent='${{target}}']`)
+                            .forEach(r => r.style.display = expanded ? "none" : "table-row");
+                    }});
+                }});
+            }})();
+        </script>
+        """
+        return table_html, row_count
+    
+    for bu_label, bu_brands in bu_groups:
+        brand_rows.append(build_row(bu_label, bu_brands))
+        for brand in bu_brands:
+            row = build_row(brand)
+            if "발주 STY수" in row:
+                row["발주 STY수"] = format_table_num(brand_order_qty.get(brand, 0))
+            if "발주 SKU수" in row:
+                row["발주 SKU수"] = format_table_num(brand_order_sku_qty.get(brand, 0))
+            if "발주액" in row:
+                row["발주액"] = format_amount_eok(brand_order_amt.get(brand, 0))
+            if "입고 STY수" in row:
+                row["입고 STY수"] = format_table_num(brand_in_qty.get(brand, 0))
+            if "입고 SKU수" in row:
+                row["입고 SKU수"] = format_table_num(brand_in_sku_qty.get(brand, 0))
+            if "입고액" in row:
+                row["입고액"] = format_amount_eok(brand_in_amt.get(brand, 0))
+            if "출고 STY수" in row:
+                row["출고 STY수"] = format_table_num(brand_out_qty.get(brand, 0))
+            if "출고 SKU수" in row:
+                row["출고 SKU수"] = format_table_num(brand_out_sku_qty.get(brand, 0))
+            if "출고액" in row:
+                row["출고액"] = format_amount_eok(brand_out_amt.get(brand, 0))
+            if "판매 STY수" in row:
+                row["판매 STY수"] = format_table_num(brand_sale_sty_qty.get(brand, 0))
+            if "판매 SKU수" in row:
+                row["판매 SKU수"] = format_table_num(brand_sale_sku_qty.get(brand, 0))
+            if "판매액" in row:
+                row["판매액"] = format_amount_eok(brand_sale_amt.get(brand, 0))
+            brand_rows.append(row)
+    
+    detail_df = pd.DataFrame(brand_rows)
+    display_cols = ["브랜드"] + table_columns
+    
+    # XLSX 다운로드 버튼 (표 위 우측 정렬)
+    def to_xlsx_bytes(df):
+        buffer = BytesIO()
+        export_df = df[display_cols] if all(c in df.columns for c in display_cols) else df
+        export_df.to_excel(buffer, index=False, engine="openpyxl")
+        return buffer.getvalue()
+    
+    xlsx_data = to_xlsx_bytes(detail_df)
+    btn_col_left, btn_col_right = st.columns([9, 1])
+    with btn_col_right:
+        detail_download_ts = datetime.now().strftime("%Y%m%d_%H%M")
+        st.download_button(
+            label="엑셀 다운로드",
+            data=xlsx_data,
+            file_name=f"브랜드별 입출고 모니터링_{detail_download_ts}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="download_xlsx",
+        )
+    
+    display_df = detail_df[display_cols] if all(c in detail_df.columns for c in display_cols) else detail_df
+    st.caption("브랜드명을 클릭하면 시즌별 수치를 보실 수 있습니다")
+    try:
+        import streamlit.components.v1 as components
+        season_html, row_count = build_brand_season_table_html(
+            display_df,
+            df_inout_table,
+            sty_toggle,
+            order_base_df=df_inout_order_base,
+            in_base_df=df_inout_in_base,
+        )
+        table_height = 120 + (row_count * 24)
+        components.html(season_html, height=table_height, scrolling=True)
+    except Exception:
+        season_html, _ = build_brand_season_table_html(
+            display_df,
+            df_inout_table,
+            sty_toggle,
+            order_base_df=df_inout_order_base,
+            in_base_df=df_inout_in_base,
+        )
+        st.markdown(season_html, unsafe_allow_html=True)
+    
+    st.markdown("---")
 
-detail_df = pd.DataFrame(brand_rows)
-display_cols = ["브랜드"] + table_columns
-
-# XLSX 다운로드 버튼 (표 위 우측 정렬)
-def to_xlsx_bytes(df):
-    buffer = BytesIO()
-    export_df = df[display_cols] if all(c in df.columns for c in display_cols) else df
-    export_df.to_excel(buffer, index=False, engine="openpyxl")
-    return buffer.getvalue()
-
-xlsx_data = to_xlsx_bytes(detail_df)
-btn_col_left, btn_col_right = st.columns([9, 1])
-with btn_col_right:
-    detail_download_ts = datetime.now().strftime("%Y%m%d_%H%M")
-    st.download_button(
-        label="엑셀 다운로드",
-        data=xlsx_data,
-        file_name=f"브랜드별 입출고 모니터링_{detail_download_ts}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        key="download_xlsx",
-    )
-
-display_df = detail_df[display_cols] if all(c in detail_df.columns for c in display_cols) else detail_df
-st.caption("브랜드명을 클릭하면 시즌별 수치를 보실 수 있습니다")
-try:
-    import streamlit.components.v1 as components
-    season_html, row_count = build_brand_season_table_html(
-        display_df,
-        df_inout_table,
-        sty_toggle,
-        order_base_df=df_inout_order_base,
-        in_base_df=df_inout_in_base,
-    )
-    table_height = 120 + (row_count * 24)
-    components.html(season_html, height=table_height, scrolling=True)
-except Exception:
-    season_html, _ = build_brand_season_table_html(
-        display_df,
-        df_inout_table,
-        sty_toggle,
-        order_base_df=df_inout_order_base,
-        in_base_df=df_inout_in_base,
-    )
-    st.markdown(season_html, unsafe_allow_html=True)
-
-st.markdown("---")
+_render_dashboard()
 st.caption("본 대시보드 관련한 문의가 있으실 경우, axfashion@eland.co.kr로 연락주시기 바랍니다.")
