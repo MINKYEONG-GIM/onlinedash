@@ -162,7 +162,13 @@ def _diagnose_google_connection():
     except Exception as e:
         err = (str(e) or "").strip()[:300]
         if "403" in err or "Forbidden" in err or "permission" in err.lower() or "Permission" in err:
-            return False, "권한 거부(403): 시트를 서비스 계정 이메일(client_email)과 [편집자]로 공유했는지 확인하세요. 뷰어만으로는 불가합니다."
+            try:
+                email = getattr(creds, "service_account_email", None)
+                if email:
+                    return False, f"권한 거부(403): 이 이메일을 각 시트에서 [편집자]로 추가하세요 → {email}"
+            except Exception:
+                pass
+            return False, "권한 거부(403): 시트를 서비스 계정 이메일(client_email)과 [편집자]로 공유했는지 확인하세요."
         if "404" in err or "not found" in err.lower():
             return False, "파일 없음(404): BASE_SPREADSHEET_ID가 올바른지, 해당 시트가 삭제되지 않았는지 확인하세요."
         if "enabled" in err.lower() or "has not been used" in err.lower():
