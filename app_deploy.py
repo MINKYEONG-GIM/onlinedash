@@ -54,6 +54,9 @@ WH_SPREADSHEET_ID   = _secret("WH_SPREADSHEET_ID")
 CV_SPREADSHEET_ID   = _secret("CV_SPREADSHEET_ID")
 MI_SPREADSHEET_ID   = _secret("MI_SPREADSHEET_ID")
 RM_SPREADSHEET_ID   = _secret("RM_SPREADSHEET_ID")
+HP_SPREADSHEET_ID   = _secret("HP_SPREADSHEET_ID")
+EB_SPREADSHEET_ID   = _secret("EB_SPREADSHEET_ID")
+
 
 GOOGLE_SPREADSHEET_IDS = {
     "inout": BASE_SPREADSHEET_ID,
@@ -62,6 +65,8 @@ GOOGLE_SPREADSHEET_IDS = {
     "clavis": CV_SPREADSHEET_ID,
     "mixxo": MI_SPREADSHEET_ID,
     "roem": RM_SPREADSHEET_ID,
+    "shoopen": HP_SPREADSHEET_ID,
+    "eblin": EB_SPREADSHEET_ID
 }
 
 
@@ -89,9 +94,10 @@ mixxo_photo_file_path = os.path.join(
 roem_photo_file_path = os.path.join(
     DB_DIR, "★RM온라인 2026년 스타일판_2026년 2월06일(1).xlsx"
 )
+hp_photo_file_path = os.path.join(DB_DIR, "HP온라인_스타일판.xlsx")
 
 # 키별 로컬 경로 매핑(Google 사용 불가 시 fallback)
-EXCEL_KEYS = ("inout", "spao", "whoau", "clavis", "mixxo", "roem")
+EXCEL_KEYS = ("inout", "spao", "whoau", "clavis", "mixxo", "roem", "shoopen", "eblin")
 PATH_MAP = {
     "inout": inout_file_path,
     "spao": spao_register_file_path,
@@ -99,6 +105,8 @@ PATH_MAP = {
     "clavis": clavis_photo_file_path,
     "mixxo": mixxo_photo_file_path,
     "roem": roem_photo_file_path,
+    "shoopen": hp_photo_file_path,
+    "eblin": eb_photo_file_path
 }
 
 # =====================================================
@@ -500,7 +508,7 @@ def load_inout_data(io_bytes=None, _cache_key=None):
             "eb": "에블린",
             "hp": "슈펜",
             "cv": "클라비스",
-            "nk": "뉴발란스키즈",
+            "nk": "뉴발란스키즈"
         }
         inferred_brand = prefix.map(brand_map)
         df["브랜드"] = inferred_brand
@@ -872,6 +880,15 @@ def _roem_bytes(io_bytes):
     if io_bytes is not None and len(io_bytes) > 0:
         return io_bytes
     path = ensure_xlsx_path(roem_photo_file_path) if os.path.exists(roem_photo_file_path) else None
+    if not path or not os.path.exists(path):
+        return None
+    with open(path, "rb") as f:
+        return f.read()
+
+def _hp_bytes(io_bytes):
+    if io_bytes is not None and len(io_bytes) > 0:
+        return io_bytes
+    path = ensure_xlsx_path(hp_photo_file_path) if os.path.exists(hp_photo_file_path) else None
     if not path or not os.path.exists(path):
         return None
     with open(path, "rb") as f:
@@ -1984,6 +2001,68 @@ def load_roem_metric_days(target_keywords, io_bytes=None, _cache_key=None):
     return float(mean_val), int(values.count()), header_cell
 
 @st.cache_data
+def load_hp_metric_days(target_keywords, io_bytes=None, _cache_key=None):
+    # 슈펜(HP) 트래킹판에서 특정 소요일 컬럼 평균 산출
+    if _cache_key is None:
+        _cache_key = "hp_metric_default"
+    hp_bytes = _hp_bytes(io_bytes)
+    if hp_bytes is None:
+        return None
+    try:
+        excel_file = pd.ExcelFile(BytesIO(hp_bytes))
+    except Exception:
+        return None
+    best_sheet = None
+    best_df = None
+    best_hits = -1
+    best_header = None
+
+    def normalize_header_text(value):
+        return "".join(str(value).split())
+
+    normalized_keywords = ["".join(str(k).split()) for k in target_keywords]
+    for sheet_name in excel_file.sheet_names:
+        try:
+            df_raw_sheet = pd.read_excel(BytesIO(hp_bytes), sheet_name=sheet_name, header=None)
+        except Exception:
+            continue
+        if df_raw_sheet.empty:
+            continue
+        header_mask = df_raw_sheet.astype(str).applymap(
+            lambda v: any(k in normalize_header_text(v) for k in normalized_keywords)
+        )
+        if not header_mask.any().any():
+            continue
+        hits = int(header_mask.sum().sum())
+        if hits > best_hits:
+            header_pos = header_mask.stack().idxmax()
+            best_header = (int(header_pos[0]), int(header_pos[1]))
+            best_hits = hits
+            best_sheet = sheet_name
+            best_df = df_raw_sheet
+    if best_df is None or best_header is None:
+        return None
+    header_row_idx, col_idx = best_header
+    values = pd.to_numeric(
+        best_df.iloc[header_row_idx + 1 :, col_idx], errors="coerce"
+    ).dropna()
+    values = values[(values >= 0) & (values < 100)]
+    if values.empty:
+        return None
+    mean_val = values.mean()
+
+    def col_letter(n):
+        n += 1
+        s = ""
+        while n:
+            n, r = divmod(n - 1, 26)
+            s = chr(65 + r) + s
+        return s
+
+    header_cell = f"{col_letter(col_idx)}{header_row_idx + 1}"
+    return float(mean_val), int(values.count()), header_cell
+
+@st.cache_data
 def load_roem_registered_style_count(io_bytes=None, _cache_key=None):
     # 로엠 트래킹판에서 스타일코드 + 공홈등록일 모두 있는 행 카운트 (메모리에서 읽음)
     if _cache_key is None:
@@ -2091,6 +2170,107 @@ def load_roem_registered_style_count(io_bytes=None, _cache_key=None):
     return int(style_text[valid].nunique(dropna=True))
 
 @st.cache_data
+def load_hp_registered_style_count(io_bytes=None, _cache_key=None):
+    # 슈펜(HP) 트래킹판에서 스타일코드 + 공홈등록일 모두 있는 행 카운트
+    if _cache_key is None:
+        _cache_key = "hp_reg_count_default"
+    hp_bytes = _hp_bytes(io_bytes)
+    if hp_bytes is None:
+        return 0
+    try:
+        excel_file = pd.ExcelFile(BytesIO(hp_bytes))
+    except Exception:
+        return 0
+
+    def normalize_header_text(value):
+        return "".join(str(value).split())
+
+    register_keywords = [
+        "상품등록일", "공홈등록일", "공홈 등록일", "등록일",
+        "온라인등록일", "온라인 등록일", "온라인상품등록일", "온라인 상품등록일",
+    ]
+    style_keywords = ["스타일코드", "스타일"]
+
+    def scan_col(preview, keys):
+        norm_keys = ["".join(k.split()) for k in keys]
+        best_col = None
+        best_hits = 0
+        best_header_row = None
+        max_rows = min(200, len(preview))
+        for col_idx in range(preview.shape[1]):
+            col_vals = preview.iloc[:max_rows, col_idx].astype(str).map(normalize_header_text)
+            hits = 0
+            header_row = None
+            for row_idx, v in enumerate(col_vals):
+                if any(k in v for k in norm_keys):
+                    hits += 1
+                    if header_row is None:
+                        header_row = row_idx
+            if hits > best_hits:
+                best_hits = hits
+                best_col = col_idx
+                best_header_row = header_row
+        return best_col, best_header_row, best_hits
+
+    best_sheet = None
+    best_cols = None
+    best_start_row = None
+    best_score = -1
+
+    for sheet_name in excel_file.sheet_names:
+        try:
+            preview = pd.read_excel(BytesIO(hp_bytes), sheet_name=sheet_name, header=None)
+        except Exception:
+            continue
+        if preview is None or preview.empty:
+            continue
+        register_col, register_row, register_hits = scan_col(preview, register_keywords)
+        style_col, style_row, style_hits = scan_col(preview, style_keywords)
+        if register_col is None or style_col is None:
+            continue
+        score = register_hits + style_hits
+        start_row = max([r for r in [register_row, style_row] if r is not None], default=0) + 1
+        if score > best_score:
+            best_score = score
+            best_sheet = sheet_name
+            best_cols = (register_col, style_col)
+            best_start_row = start_row
+
+    if best_sheet is None or best_cols is None:
+        return 0
+
+    try:
+        df_raw = pd.read_excel(BytesIO(hp_bytes), sheet_name=best_sheet, header=None)
+    except Exception:
+        return 0
+    if df_raw is None or df_raw.empty:
+        return 0
+
+    register_col, style_col = best_cols
+    data = df_raw.iloc[best_start_row if best_start_row is not None else 0 :]
+    register_series = data.iloc[:, register_col]
+    style_series = data.iloc[:, style_col]
+
+    def clean_date_series(series):
+        s = series.replace(0, pd.NA).replace("0", pd.NA)
+        numeric = pd.to_numeric(s, errors="coerce")
+        excel_mask = numeric.between(1, 60000, inclusive="both")
+        result = pd.to_datetime(s, errors="coerce")
+        if excel_mask.any():
+            excel_dates = pd.to_datetime(
+                numeric[excel_mask], unit="d", origin="1899-12-30", errors="coerce"
+            )
+            result.loc[excel_mask] = excel_dates
+        return result
+
+    register_ok = clean_date_series(register_series).notna()
+    style_text = style_series.astype(str).str.strip()
+    style_ok = style_text.replace(r"^\s*$", pd.NA, regex=True).notna()
+    hp_mask = style_text.str.upper().str.startswith("HP", na=False)
+    valid = register_ok & style_ok & hp_mask
+    return int(style_text[valid].nunique(dropna=True))
+
+@st.cache_data
 def load_roem_register_avg_days(io_bytes=None, _cache_key=None, inout_bytes=None, _inout_cache_key=None):
     # 로엠 등록 평균 소요일: 공홈등록일(브랜드 시트) - 최초입고일(BASE 시트)
     if _cache_key is None:
@@ -2165,6 +2345,125 @@ def load_roem_register_avg_days(io_bytes=None, _cache_key=None, inout_bytes=None
 
     try:
         df_raw = pd.read_excel(BytesIO(roem_bytes), sheet_name=best_sheet, header=None)
+    except Exception:
+        return None
+    if df_raw is None or df_raw.empty:
+        return None
+
+    register_col, style_col = best_cols
+    data = df_raw.iloc[best_start_row if best_start_row is not None else 0 :]
+    register_series = data.iloc[:, register_col]
+    style_series = data.iloc[:, style_col]
+
+    def clean_date_series(series):
+        s = series.replace(0, pd.NA).replace("0", pd.NA)
+        numeric = pd.to_numeric(s, errors="coerce")
+        excel_mask = numeric.between(1, 60000, inclusive="both")
+        result = pd.to_datetime(s, errors="coerce")
+        if excel_mask.any():
+            excel_dates = pd.to_datetime(
+                numeric[excel_mask], unit="d", origin="1899-12-30", errors="coerce"
+            )
+            result.loc[excel_mask] = excel_dates
+        return result
+
+    def norm_style(val):
+        return "".join(str(val).split()) if val is not None else ""
+
+    style_ok = style_series.astype(str).str.strip().replace(r"^\s*$", pd.NA, regex=True).notna()
+    register_ok = clean_date_series(register_series).notna()
+    valid = style_ok & register_ok
+
+    reg_dt = clean_date_series(register_series)
+
+    diffs = []
+    for idx in data.index:
+        if not bool(valid.loc[idx]):
+            continue
+        style_norm = norm_style(style_series.loc[idx])
+        base_dt = base_map.get(style_norm) if style_norm else None
+        if base_dt is None or pd.isna(reg_dt.loc[idx]):
+            continue
+        diffs.append((reg_dt.loc[idx] - base_dt).days)
+    if not diffs:
+        return None
+    return float(sum(diffs)) / len(diffs)
+
+@st.cache_data
+def load_hp_register_avg_days(io_bytes=None, _cache_key=None, inout_bytes=None, _inout_cache_key=None):
+    # 슈펜(HP) 등록 평균 소요일: 공홈등록일(브랜드 시트) - 최초입고일(BASE 시트)
+    if _cache_key is None:
+        _cache_key = "hp_avg_days_default"
+    hp_bytes = _hp_bytes(io_bytes)
+    if hp_bytes is None:
+        return None
+    base_map = _base_style_to_first_in_map(inout_bytes, _inout_cache_key) if (inout_bytes is not None or _inout_cache_key is not None) else {}
+    if not base_map:
+        return None
+    def normalize_header_text(value):
+        return "".join(str(value).split())
+
+    register_date_keywords = ["공홈등록일", "등록일"]
+    style_keywords = ["스타일코드", "스타일"]
+
+    def scan_col(preview, keys):
+        norm_keys = ["".join(k.split()) for k in keys]
+        best_col = None
+        best_hits = 0
+        best_header_row = None
+        max_rows = min(200, len(preview))
+        for col_idx in range(preview.shape[1]):
+            col_vals = preview.iloc[:max_rows, col_idx].astype(str).map(normalize_header_text)
+            hits = 0
+            header_row = None
+            for row_idx, v in enumerate(col_vals):
+                if any(k in v for k in norm_keys):
+                    hits += 1
+                    if header_row is None:
+                        header_row = row_idx
+            if hits > best_hits:
+                best_hits = hits
+                best_col = col_idx
+                best_header_row = header_row
+        return best_col, best_header_row, best_hits
+
+    best_sheet = None
+    best_score = -1
+    best_cols = None
+    best_start_row = None
+
+    try:
+        excel_file = pd.ExcelFile(BytesIO(hp_bytes))
+    except Exception:
+        return None
+
+    for sheet_name in excel_file.sheet_names:
+        try:
+            preview = pd.read_excel(BytesIO(hp_bytes), sheet_name=sheet_name, header=None)
+        except Exception:
+            continue
+        if preview is None or preview.empty:
+            continue
+        register_col, register_row, register_hits = scan_col(preview, register_date_keywords)
+        style_col, style_row, style_hits = scan_col(preview, style_keywords)
+        if register_col is None or style_col is None:
+            continue
+        score = register_hits + style_hits
+        start_row = max(
+            [r for r in [register_row, style_row] if r is not None],
+            default=0,
+        ) + 1
+        if score > best_score:
+            best_score = score
+            best_sheet = sheet_name
+            best_cols = (register_col, style_col)
+            best_start_row = start_row
+
+    if best_sheet is None or best_cols is None:
+        return None
+
+    try:
+        df_raw = pd.read_excel(BytesIO(hp_bytes), sheet_name=best_sheet, header=None)
     except Exception:
         return None
     if df_raw is None or df_raw.empty:
@@ -2322,6 +2621,114 @@ def load_roem_unregistered_online_count(io_bytes=None, _cache_key=None):
     # 로엠 스타일코드(RM 시작)만 집계
     roem_mask = style_text.str.upper().str.startswith("RM", na=False)
     return int((valid & style_ok & roem_mask).sum())
+
+@st.cache_data
+def load_hp_unregistered_online_count(io_bytes=None, _cache_key=None):
+    # 슈펜(HP): 상품등록일 비어있고 리터칭완료일이 2020년 이후인 행 수
+    if _cache_key is None:
+        _cache_key = "hp_unreg_default"
+    hp_bytes = _hp_bytes(io_bytes)
+    if hp_bytes is None:
+        return 0
+    try:
+        excel_file = pd.ExcelFile(BytesIO(hp_bytes))
+    except Exception:
+        return 0
+
+    def normalize_header_text(value):
+        return "".join(str(value).split())
+
+    register_keywords = ["공홈등록일"]
+    retouch_keywords = ["리터칭완료일"]
+    register_norm = ["".join(k.split()) for k in register_keywords]
+    retouch_norm = ["".join(k.split()) for k in retouch_keywords]
+
+    best_sheet = None
+    best_score = -1
+    best_cols = None
+    best_start_row = None
+
+    for sheet_name in excel_file.sheet_names:
+        try:
+            preview = pd.read_excel(BytesIO(hp_bytes), sheet_name=sheet_name, header=None)
+        except Exception:
+            continue
+        if preview is None or preview.empty:
+            continue
+
+        max_rows = min(200, len(preview))
+
+        def scan_col(keys):
+            norm_keys = ["".join(k.split()) for k in keys]
+            best_col = None
+            best_hits = 0
+            best_header_row = None
+            for col_idx in range(preview.shape[1]):
+                col_vals = preview.iloc[:max_rows, col_idx].astype(str).map(normalize_header_text)
+                hits = 0
+                header_row = None
+                for row_idx, v in enumerate(col_vals):
+                    if any(k in v for k in norm_keys):
+                        hits += 1
+                        if header_row is None:
+                            header_row = row_idx
+                if hits > best_hits:
+                    best_hits = hits
+                    best_col = col_idx
+                    best_header_row = header_row
+            return best_col, best_header_row, best_hits
+
+        register_col, register_row, register_hits = scan_col(register_keywords)
+        retouch_col, retouch_row, retouch_hits = scan_col(retouch_keywords)
+        style_col, style_row, style_hits = scan_col(["스타일코드", "스타일"])
+
+        if register_col is None or retouch_col is None:
+            continue
+        score = register_hits + retouch_hits + style_hits
+        start_row = max([r for r in [register_row, retouch_row, style_row] if r is not None], default=0) + 1
+        if score > best_score:
+            best_score = score
+            best_sheet = sheet_name
+            best_cols = (register_col, retouch_col, style_col)
+            best_start_row = start_row
+
+    if best_sheet is None or best_cols is None:
+        return 0
+
+    try:
+        df_raw = pd.read_excel(BytesIO(hp_bytes), sheet_name=best_sheet, header=None)
+    except Exception:
+        return 0
+    if df_raw is None or df_raw.empty:
+        return 0
+    register_col, retouch_col, style_col = best_cols
+    data = df_raw.iloc[best_start_row if best_start_row is not None else 0 :]
+    register_series = data.iloc[:, register_col]
+    retouch_series = data.iloc[:, retouch_col]
+    style_series = data.iloc[:, style_col] if style_col is not None else None
+
+    def clean_date_series(series):
+        s = series.replace(0, pd.NA).replace("0", pd.NA)
+        numeric = pd.to_numeric(s, errors="coerce")
+        excel_mask = numeric.between(1, 60000, inclusive="both")
+        result = pd.to_datetime(s, errors="coerce")
+        if excel_mask.any():
+            excel_dates = pd.to_datetime(
+                numeric[excel_mask], unit="d", origin="1899-12-30", errors="coerce"
+            )
+            result.loc[excel_mask] = excel_dates
+        return result
+
+    register_dt = clean_date_series(register_series)
+    register_ok = register_dt.notna()
+    retouch_dt = clean_date_series(retouch_series)
+    valid = (~register_ok) & retouch_dt.notna()
+    if style_series is None:
+        return int(valid.sum())
+    style_text = style_series.astype(str).str.strip()
+    style_ok = style_text.replace(r"^\s*$", pd.NA, regex=True).notna()
+    hp_mask = style_text.str.upper().str.startswith("HP", na=False)
+    return int((valid & style_ok & hp_mask).sum())
 
 @st.cache_data
 def load_roem_register_debug(io_bytes=None, _cache_key=None):
@@ -2771,6 +3178,33 @@ roem_register_avg_days = load_roem_register_avg_days(
 if roem_register_avg_days is None:
     roem_register_avg_days = 3.89
 roem_unregistered_online_count = load_roem_unregistered_online_count(_roem_src[0], _cache_key=_roem_src[1])
+
+_shoopen_src = _sources.get("shoopen", (None, None))
+hp_handover_result = load_hp_metric_days(
+    ["포토팀상품인계", "포토팀 상품인계", "상품인계소요일", "상품인계 소요일", "포토인계소요일", "포토 인계 소요일"],
+    _shoopen_src[0], _cache_key=_shoopen_src[1]
+)
+hp_handover_days = hp_handover_result[0] if hp_handover_result else None
+hp_handover_count = hp_handover_result[1] if hp_handover_result else 0
+hp_handover_header_cell = hp_handover_result[2] if hp_handover_result else None
+hp_shooting_result = load_hp_metric_days(["촬영소요일", "촬영 소요일", "촬영기간"], _shoopen_src[0], _cache_key=_shoopen_src[1])
+hp_shooting_days = hp_shooting_result[0] if hp_shooting_result else None
+hp_shooting_count = hp_shooting_result[1] if hp_shooting_result else 0
+hp_shooting_header_cell = hp_shooting_result[2] if hp_shooting_result else None
+hp_register_days_result = load_hp_metric_days(
+    ["상품등록소요일", "상품등록 소요일", "공홈등록소요일", "공홈등록 소요일", "등록소요일", "등록 소요일"],
+    _shoopen_src[0], _cache_key=_shoopen_src[1]
+)
+hp_register_days = hp_register_days_result[0] if hp_register_days_result else None
+hp_register_count = hp_register_days_result[1] if hp_register_days_result else 0
+hp_register_header_cell = hp_register_days_result[2] if hp_register_days_result else None
+hp_register_style_count = load_hp_registered_style_count(_shoopen_src[0], _cache_key=_shoopen_src[1])
+hp_register_avg_days = load_hp_register_avg_days(
+    _shoopen_src[0], _cache_key=_shoopen_src[1],
+    inout_bytes=_inout_src[0], _inout_cache_key=_inout_src[1],
+)
+hp_unregistered_online_count = load_hp_unregistered_online_count(_shoopen_src[0], _cache_key=_shoopen_src[1])
+
 spao_unregistered_online_count = load_spao_unregistered_online_count(_spao_src[0], _cache_key=_spao_src[1])
 
 # =====================================================
@@ -3552,6 +3986,15 @@ def _render_dashboard():
             display_days[2] = round(roem_register_avg_days, 1)
         elif roem_register_days is not None:
             display_days[2] = round(roem_register_days, 1)
+    if selected_brand == "슈펜":
+        if hp_handover_days is not None:
+            display_days[0] = round(hp_handover_days, 1)
+        if hp_shooting_days is not None:
+            display_days[1] = round(hp_shooting_days, 1)
+        if hp_register_avg_days is not None:
+            display_days[2] = round(hp_register_avg_days, 1)
+        elif hp_register_days is not None:
+            display_days[2] = round(hp_register_days, 1)
     
     st.markdown(
         f'<div class="section-title" style="font-size: 1.6rem;">{selected_brand} 단계별 리드타임</div>',
@@ -3653,6 +4096,21 @@ def _render_dashboard():
         st.caption(
             f"상품등록 소요일 위치: {roem_register_header_cell} · "
             f"숫자 {roem_register_count}개 평균"
+        )
+    if selected_brand == "슈펜" and hp_handover_header_cell:
+        st.caption(
+            f"포토팀 상품인계 위치: {hp_handover_header_cell} · "
+            f"숫자 {hp_handover_count}개 평균"
+        )
+    if selected_brand == "슈펜" and hp_shooting_header_cell:
+        st.caption(
+            f"촬영 소요일 위치: {hp_shooting_header_cell} · "
+            f"숫자 {hp_shooting_count}개 평균"
+        )
+    if selected_brand == "슈펜" and hp_register_header_cell:
+        st.caption(
+            f"상품등록 소요일 위치: {hp_register_header_cell} · "
+            f"숫자 {hp_register_count}개 평균"
         )
     
     # 브랜드별 상품등록 모니터링 (상단 표)
@@ -3765,6 +4223,8 @@ def _render_dashboard():
             register_style_counts["미쏘"] = mixxo_register_style_count
         if roem_register_style_count is not None:
             register_style_counts["로엠"] = roem_register_style_count
+        if hp_register_style_count is not None:
+            register_style_counts["슈펜"] = hp_register_style_count
         def has_online_register_data(brand_name):
             if brand_name in bu_labels:
                 brands = next((b for l, b in bu_groups if l == brand_name), [])
@@ -3801,6 +4261,7 @@ def _render_dashboard():
             "클라비스": clavis_unregistered_online_count,
             "미쏘": mixxo_unregistered_online_count,
             "로엠": roem_unregistered_online_count,
+            "슈펜": hp_unregistered_online_count,
         }
         def format_dash_if_no_register(brand_name, value):
             if not has_online_register_data(brand_name):
@@ -3854,6 +4315,8 @@ def _render_dashboard():
             avg_days_by_brand["미쏘"] = mixxo_register_avg_days
         if roem_register_avg_days is not None:
             avg_days_by_brand["로엠"] = roem_register_avg_days
+        if hp_register_avg_days is not None:
+            avg_days_by_brand["슈펜"] = hp_register_avg_days
         def resolve_avg_days(brand_name):
             if brand_name in bu_labels:
                 brands = next((b for l, b in bu_groups if l == brand_name), [])
