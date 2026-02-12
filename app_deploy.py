@@ -393,6 +393,32 @@ def safe_sum(df, col_name):
         return 0
     return pd.to_numeric(df[col_name], errors="coerce").sum()
 
+
+@st.cache_data
+def _base_style_to_first_in_map(inout_bytes=None, _cache_key=None):
+    """BASE 시트에서 스타일코드별 최초입고일(min) 맵. 반환: dict normalized_style -> datetime."""
+    df = load_inout_data(inout_bytes, _cache_key=_cache_key)
+    if df is None or df.empty:
+        return {}
+    style_col = find_col(["스타일코드", "스타일"], df=df)
+    first_col = find_col(["최초입고일", "첫 입고일", "입고일"], df=df)
+    if style_col is None or first_col is None:
+        return {}
+    df = df.copy()
+    df["_style"] = df[style_col].astype(str).str.strip().str.replace(" ", "", regex=False)
+    numeric = pd.to_numeric(df[first_col], errors="coerce")
+    excel_mask = numeric.between(1, 60000, inclusive="both")
+    df["_first_in"] = pd.to_datetime(df[first_col], errors="coerce")
+    if excel_mask.any():
+        df.loc[excel_mask, "_first_in"] = pd.to_datetime(
+            numeric[excel_mask], unit="d", origin="1899-12-30", errors="coerce"
+        )
+    df = df[df["_first_in"].notna() & (df["_style"].str.len() > 0)]
+    if df.empty:
+        return {}
+    return df.groupby("_style")["_first_in"].min().to_dict()
+
+
 @st.cache_data
 def load_inout_data(io_bytes=None, _cache_key=None):
     """
@@ -670,8 +696,8 @@ def load_spao_registered_style_count(io_bytes=None, _cache_key=None):
     return int(count)
 
 @st.cache_data
-def load_spao_register_avg_days(io_bytes=None, _cache_key=None):
-    # 스파오 등록 평균 리드타임 계산(스튜디오 전표일자 우선, 없으면 포토인계일 기준)
+def load_spao_register_avg_days(io_bytes=None, _cache_key=None, inout_bytes=None, _inout_cache_key=None):
+    # 스파오 등록 평균 소요일: 공홈등록일(브랜드 시트) - 최초입고일(BASE 시트)
     if _cache_key is None:
         _cache_key = "spao_avg_days_default"
     if io_bytes is None or len(io_bytes) == 0:
@@ -679,6 +705,9 @@ def load_spao_register_avg_days(io_bytes=None, _cache_key=None):
             return None
         with open(spao_register_file_path, "rb") as f:
             io_bytes = f.read()
+    base_map = _base_style_to_first_in_map(inout_bytes, _inout_cache_key) if (inout_bytes is not None or _inout_cache_key is not None) else {}
+    if not base_map:
+        return None
     try:
         from openpyxl import load_workbook
     except Exception:
@@ -694,7 +723,6 @@ def load_spao_register_avg_days(io_bytes=None, _cache_key=None):
 
     header_row_idx = None
     header_vals = None
-    # 헤더 행 탐색(상단 30행)
     for i, row in enumerate(ws.iter_rows(min_row=1, max_row=30, values_only=True), start=1):
         norm = [normalize(v) for v in row]
         if any("스타일코드" in v for v in norm) and any("공홈등록일" in v for v in norm):
@@ -715,32 +743,19 @@ def load_spao_register_avg_days(io_bytes=None, _cache_key=None):
 
     style_col = find_col("스타일코드") or find_col("스타일")
     register_col = find_col("공홈등록일") or find_col("등록일")
-    studio_col = find_col("스튜디오전표일자") or find_col("스튜디오 전표일자")
-    handover_col = find_col("포토인계일") or find_col("포토 인계일")
     if style_col is None or register_col is None:
         return None
 
     diffs = []
-    # 등록일 - 기준일(스튜디오/포토인계) 일수 차이 평균
     for row in ws.iter_rows(min_row=header_row_idx + 1, values_only=True):
         style_val = row[style_col] if style_col < len(row) else None
         reg_val = row[register_col] if register_col < len(row) else None
-        studio_val = row[studio_col] if (studio_col is not None and studio_col < len(row)) else None
-        handover_val = row[handover_col] if (handover_col is not None and handover_col < len(row)) else None
-        style_ok = style_val is not None and str(style_val).strip() != ""
-        reg_ok = reg_val is not None and str(reg_val).strip() != ""
-        studio_text = "" if studio_val is None else str(studio_val).strip()
-        studio_ok = studio_text != "" and studio_text != "0"
-        handover_ok = handover_val is not None and str(handover_val).strip() != ""
-        if not (style_ok and reg_ok):
+        style_norm = normalize(style_val) if style_val is not None else ""
+        if not style_norm or not (reg_val is not None and str(reg_val).strip() not in ("", "0")):
             continue
         reg_dt = pd.to_datetime(reg_val, errors="coerce")
-        base_dt = None
-        if studio_ok:
-            base_dt = pd.to_datetime(studio_val, errors="coerce")
-        elif handover_ok:
-            base_dt = pd.to_datetime(handover_val, errors="coerce")
-        if pd.isna(reg_dt) or base_dt is None or pd.isna(base_dt):
+        base_dt = base_map.get(style_norm)
+        if pd.isna(reg_dt) or base_dt is None:
             continue
         diff = (reg_dt - base_dt).days
         diffs.append(diff)
@@ -763,7 +778,10 @@ spao_photo_days = spao_photo_result[0] if spao_photo_result else None
 spao_photo_count = spao_photo_result[1] if spao_photo_result else 0
 spao_photo_header_cell = spao_photo_result[2] if spao_photo_result else None
 spao_register_style_count = load_spao_registered_style_count(_spao_src[0], _cache_key=_spao_src[1])
-spao_register_avg_days = load_spao_register_avg_days(_spao_src[0], _cache_key=_spao_src[1])
+spao_register_avg_days = load_spao_register_avg_days(
+    _spao_src[0], _cache_key=_spao_src[1],
+    inout_bytes=_inout_src[0], _inout_cache_key=_inout_src[1],
+)
 
 # =====================================================
 # (C) [후아유] 스타일판 로더/지표 추출
@@ -979,27 +997,20 @@ def load_whoau_registered_style_count(io_bytes=None, _cache_key=None):
     return int(len(style_set))
 
 @st.cache_data
-def load_whoau_register_avg_days(io_bytes=None, _cache_key=None):
-    # 후아유 등록 평균 소요일 계산:
-    # 공홈등록일 - 기준일(스튜디오 전표일자 우선, 없으면 포토인계일) 평균
+def load_whoau_register_avg_days(io_bytes=None, _cache_key=None, inout_bytes=None, _inout_cache_key=None):
+    # 후아유 등록 평균 소요일: 공홈등록일(브랜드 시트) - 최초입고일(BASE 시트)
     if _cache_key is None:
         _cache_key = "whoau_avg_days_default"
     whoau_bytes = _whoau_bytes(io_bytes)
     if whoau_bytes is None:
         return None
+    base_map = _base_style_to_first_in_map(inout_bytes, _inout_cache_key) if (inout_bytes is not None or _inout_cache_key is not None) else {}
+    if not base_map:
+        return None
     def normalize_header_text(value):
         return "".join(str(value).split())
 
     register_date_keywords = ["공홈등록일", "등록일"]
-    studio_keywords = ["스튜디오전표일자", "스튜디오 전표일자"]
-    handover_keywords = [
-        "포토인계일",
-        "포토 인계일",
-        "포토팀상품인계",
-        "포토팀 상품인계",
-        "상품인계일",
-        "상품 인계일",
-    ]
     style_keywords = ["스타일코드", "스타일"]
 
     def scan_col(preview, keys):
@@ -1041,20 +1052,18 @@ def load_whoau_register_avg_days(io_bytes=None, _cache_key=None):
         if preview is None or preview.empty:
             continue
         register_col, register_row, register_hits = scan_col(preview, register_date_keywords)
-        studio_col, studio_row, studio_hits = scan_col(preview, studio_keywords)
-        handover_col, handover_row, handover_hits = scan_col(preview, handover_keywords)
         style_col, style_row, style_hits = scan_col(preview, style_keywords)
-        if register_col is None or (studio_col is None and handover_col is None):
+        if register_col is None or style_col is None:
             continue
-        score = register_hits + studio_hits + handover_hits + style_hits
+        score = register_hits + style_hits
         start_row = max(
-            [r for r in [register_row, studio_row, handover_row, style_row] if r is not None],
+            [r for r in [register_row, style_row] if r is not None],
             default=0,
         ) + 1
         if score > best_score:
             best_score = score
             best_sheet = sheet_name
-            best_cols = (register_col, studio_col, handover_col, style_col)
+            best_cols = (register_col, style_col)
             best_start_row = start_row
 
     if best_sheet is None or best_cols is None:
@@ -1067,12 +1076,10 @@ def load_whoau_register_avg_days(io_bytes=None, _cache_key=None):
     if df_raw is None or df_raw.empty:
         return None
 
-    register_col, studio_col, handover_col, style_col = best_cols
+    register_col, style_col = best_cols
     data = df_raw.iloc[best_start_row if best_start_row is not None else 0 :]
     register_series = data.iloc[:, register_col]
-    studio_series = data.iloc[:, studio_col] if studio_col is not None else None
-    handover_series = data.iloc[:, handover_col] if handover_col is not None else None
-    style_series = data.iloc[:, style_col] if style_col is not None else None
+    style_series = data.iloc[:, style_col]
 
     def clean_date_series(series):
         s = series.replace(0, pd.NA).replace("0", pd.NA)
@@ -1086,27 +1093,21 @@ def load_whoau_register_avg_days(io_bytes=None, _cache_key=None):
             result.loc[excel_mask] = excel_dates
         return result
 
-    style_ok = (
-        style_series.astype(str).str.strip().replace(r"^\s*$", pd.NA, regex=True).notna()
-        if style_series is not None
-        else pd.Series(True, index=data.index)
-    )
+    def norm_style(val):
+        return "".join(str(val).split()) if val is not None else ""
+
+    style_ok = style_series.astype(str).str.strip().replace(r"^\s*$", pd.NA, regex=True).notna()
     register_ok = clean_date_series(register_series).notna()
     valid = style_ok & register_ok
 
     reg_dt = clean_date_series(register_series)
-    studio_dt = clean_date_series(studio_series) if studio_series is not None else None
-    handover_dt = clean_date_series(handover_series) if handover_series is not None else None
 
     diffs = []
     for idx in data.index:
         if not bool(valid.loc[idx]):
             continue
-        base_dt = None
-        if studio_dt is not None and pd.notna(studio_dt.loc[idx]):
-            base_dt = studio_dt.loc[idx]
-        elif handover_dt is not None and pd.notna(handover_dt.loc[idx]):
-            base_dt = handover_dt.loc[idx]
+        style_norm = norm_style(style_series.loc[idx])
+        base_dt = base_map.get(style_norm) if style_norm else None
         if base_dt is None or pd.isna(reg_dt.loc[idx]):
             continue
         diffs.append((reg_dt.loc[idx] - base_dt).days)
@@ -1301,27 +1302,20 @@ def load_clavis_registered_style_count(io_bytes=None, _cache_key=None):
     return int(len(style_set))
 
 @st.cache_data
-def load_clavis_register_avg_days(io_bytes=None, _cache_key=None):
-    # 클라비스 등록 평균 소요일 계산:
-    # 공홈등록일 - 기준일(스튜디오 전표일자 우선, 없으면 포토인계일) 평균
+def load_clavis_register_avg_days(io_bytes=None, _cache_key=None, inout_bytes=None, _inout_cache_key=None):
+    # 클라비스 등록 평균 소요일: 공홈등록일(브랜드 시트) - 최초입고일(BASE 시트)
     if _cache_key is None:
         _cache_key = "clavis_avg_days_default"
     clavis_bytes = _clavis_bytes(io_bytes)
     if clavis_bytes is None:
         return None
+    base_map = _base_style_to_first_in_map(inout_bytes, _inout_cache_key) if (inout_bytes is not None or _inout_cache_key is not None) else {}
+    if not base_map:
+        return None
     def normalize_header_text(value):
         return "".join(str(value).split())
 
     register_date_keywords = ["공홈등록일", "등록일"]
-    studio_keywords = ["스튜디오전표일자", "스튜디오 전표일자"]
-    handover_keywords = [
-        "포토인계일",
-        "포토 인계일",
-        "포토팀상품인계",
-        "포토팀 상품인계",
-        "상품인계일",
-        "상품 인계일",
-    ]
     style_keywords = ["스타일코드", "스타일"]
 
     def scan_col(preview, keys):
@@ -1363,20 +1357,18 @@ def load_clavis_register_avg_days(io_bytes=None, _cache_key=None):
         if preview is None or preview.empty:
             continue
         register_col, register_row, register_hits = scan_col(preview, register_date_keywords)
-        studio_col, studio_row, studio_hits = scan_col(preview, studio_keywords)
-        handover_col, handover_row, handover_hits = scan_col(preview, handover_keywords)
         style_col, style_row, style_hits = scan_col(preview, style_keywords)
-        if register_col is None or (studio_col is None and handover_col is None):
+        if register_col is None or style_col is None:
             continue
-        score = register_hits + studio_hits + handover_hits + style_hits
+        score = register_hits + style_hits
         start_row = max(
-            [r for r in [register_row, studio_row, handover_row, style_row] if r is not None],
+            [r for r in [register_row, style_row] if r is not None],
             default=0,
         ) + 1
         if score > best_score:
             best_score = score
             best_sheet = sheet_name
-            best_cols = (register_col, studio_col, handover_col, style_col)
+            best_cols = (register_col, style_col)
             best_start_row = start_row
 
     if best_sheet is None or best_cols is None:
@@ -1389,12 +1381,10 @@ def load_clavis_register_avg_days(io_bytes=None, _cache_key=None):
     if df_raw is None or df_raw.empty:
         return None
 
-    register_col, studio_col, handover_col, style_col = best_cols
+    register_col, style_col = best_cols
     data = df_raw.iloc[best_start_row if best_start_row is not None else 0 :]
     register_series = data.iloc[:, register_col]
-    studio_series = data.iloc[:, studio_col] if studio_col is not None else None
-    handover_series = data.iloc[:, handover_col] if handover_col is not None else None
-    style_series = data.iloc[:, style_col] if style_col is not None else None
+    style_series = data.iloc[:, style_col]
 
     def clean_date_series(series):
         s = series.replace(0, pd.NA).replace("0", pd.NA)
@@ -1408,27 +1398,21 @@ def load_clavis_register_avg_days(io_bytes=None, _cache_key=None):
             result.loc[excel_mask] = excel_dates
         return result
 
-    style_ok = (
-        style_series.astype(str).str.strip().replace(r"^\s*$", pd.NA, regex=True).notna()
-        if style_series is not None
-        else pd.Series(True, index=data.index)
-    )
+    def norm_style(val):
+        return "".join(str(val).split()) if val is not None else ""
+
+    style_ok = style_series.astype(str).str.strip().replace(r"^\s*$", pd.NA, regex=True).notna()
     register_ok = clean_date_series(register_series).notna()
     valid = style_ok & register_ok
 
     reg_dt = clean_date_series(register_series)
-    studio_dt = clean_date_series(studio_series) if studio_series is not None else None
-    handover_dt = clean_date_series(handover_series) if handover_series is not None else None
 
     diffs = []
     for idx in data.index:
         if not bool(valid.loc[idx]):
             continue
-        base_dt = None
-        if studio_dt is not None and pd.notna(studio_dt.loc[idx]):
-            base_dt = studio_dt.loc[idx]
-        elif handover_dt is not None and pd.notna(handover_dt.loc[idx]):
-            base_dt = handover_dt.loc[idx]
+        style_norm = norm_style(style_series.loc[idx])
+        base_dt = base_map.get(style_norm) if style_norm else None
         if base_dt is None or pd.isna(reg_dt.loc[idx]):
             continue
         diffs.append((reg_dt.loc[idx] - base_dt).days)
@@ -1690,27 +1674,20 @@ def load_mixxo_registered_style_count(io_bytes=None, _cache_key=None):
     return 0
 
 @st.cache_data
-def load_mixxo_register_avg_days(io_bytes=None, _cache_key=None):
-    # 미쏘 등록 평균 소요일 계산 (메모리에서 읽음):
-    # 공홈등록일 - 기준일(스튜디오 전표일자 우선, 없으면 포토인계일) 평균
+def load_mixxo_register_avg_days(io_bytes=None, _cache_key=None, inout_bytes=None, _inout_cache_key=None):
+    # 미쏘 등록 평균 소요일: 공홈등록일(브랜드 시트) - 최초입고일(BASE 시트)
     if _cache_key is None:
         _cache_key = "mixxo_avg_days_default"
     mixxo_bytes = _mixxo_bytes(io_bytes)
     if mixxo_bytes is None:
         return None
+    base_map = _base_style_to_first_in_map(inout_bytes, _inout_cache_key) if (inout_bytes is not None or _inout_cache_key is not None) else {}
+    if not base_map:
+        return None
     def normalize_header_text(value):
         return "".join(str(value).split())
 
     register_date_keywords = ["공홈등록일", "등록일"]
-    studio_keywords = ["스튜디오전표일자", "스튜디오 전표일자"]
-    handover_keywords = [
-        "포토인계일",
-        "포토 인계일",
-        "포토팀상품인계",
-        "포토팀 상품인계",
-        "상품인계일",
-        "상품 인계일",
-    ]
     style_keywords = ["스타일코드", "스타일"]
 
     def scan_col(preview, keys):
@@ -1752,20 +1729,18 @@ def load_mixxo_register_avg_days(io_bytes=None, _cache_key=None):
         if preview is None or preview.empty:
             continue
         register_col, register_row, register_hits = scan_col(preview, register_date_keywords)
-        studio_col, studio_row, studio_hits = scan_col(preview, studio_keywords)
-        handover_col, handover_row, handover_hits = scan_col(preview, handover_keywords)
         style_col, style_row, style_hits = scan_col(preview, style_keywords)
-        if register_col is None or (studio_col is None and handover_col is None):
+        if register_col is None or style_col is None:
             continue
-        score = register_hits + studio_hits + handover_hits + style_hits
+        score = register_hits + style_hits
         start_row = max(
-            [r for r in [register_row, studio_row, handover_row, style_row] if r is not None],
+            [r for r in [register_row, style_row] if r is not None],
             default=0,
         ) + 1
         if score > best_score:
             best_score = score
             best_sheet = sheet_name
-            best_cols = (register_col, studio_col, handover_col, style_col)
+            best_cols = (register_col, style_col)
             best_start_row = start_row
 
     if best_sheet is None or best_cols is None:
@@ -1778,12 +1753,10 @@ def load_mixxo_register_avg_days(io_bytes=None, _cache_key=None):
     if df_raw is None or df_raw.empty:
         return None
 
-    register_col, studio_col, handover_col, style_col = best_cols
+    register_col, style_col = best_cols
     data = df_raw.iloc[best_start_row if best_start_row is not None else 0 :]
     register_series = data.iloc[:, register_col]
-    studio_series = data.iloc[:, studio_col] if studio_col is not None else None
-    handover_series = data.iloc[:, handover_col] if handover_col is not None else None
-    style_series = data.iloc[:, style_col] if style_col is not None else None
+    style_series = data.iloc[:, style_col]
 
     def clean_date_series(series):
         s = series.replace(0, pd.NA).replace("0", pd.NA)
@@ -1797,27 +1770,21 @@ def load_mixxo_register_avg_days(io_bytes=None, _cache_key=None):
             result.loc[excel_mask] = excel_dates
         return result
 
-    style_ok = (
-        style_series.astype(str).str.strip().replace(r"^\s*$", pd.NA, regex=True).notna()
-        if style_series is not None
-        else pd.Series(True, index=data.index)
-    )
+    def norm_style(val):
+        return "".join(str(val).split()) if val is not None else ""
+
+    style_ok = style_series.astype(str).str.strip().replace(r"^\s*$", pd.NA, regex=True).notna()
     register_ok = clean_date_series(register_series).notna()
     valid = style_ok & register_ok
 
     reg_dt = clean_date_series(register_series)
-    studio_dt = clean_date_series(studio_series) if studio_series is not None else None
-    handover_dt = clean_date_series(handover_series) if handover_series is not None else None
 
     diffs = []
     for idx in data.index:
         if not bool(valid.loc[idx]):
             continue
-        base_dt = None
-        if studio_dt is not None and pd.notna(studio_dt.loc[idx]):
-            base_dt = studio_dt.loc[idx]
-        elif handover_dt is not None and pd.notna(handover_dt.loc[idx]):
-            base_dt = handover_dt.loc[idx]
+        style_norm = norm_style(style_series.loc[idx])
+        base_dt = base_map.get(style_norm) if style_norm else None
         if base_dt is None or pd.isna(reg_dt.loc[idx]):
             continue
         diffs.append((reg_dt.loc[idx] - base_dt).days)
@@ -2124,27 +2091,20 @@ def load_roem_registered_style_count(io_bytes=None, _cache_key=None):
     return int(style_text[valid].nunique(dropna=True))
 
 @st.cache_data
-def load_roem_register_avg_days(io_bytes=None, _cache_key=None):
-    # 로엠 등록 평균 소요일 계산 (메모리에서 읽음):
-    # 공홈등록일 - 기준일(스튜디오 전표일자 우선, 없으면 포토인계일) 평균
+def load_roem_register_avg_days(io_bytes=None, _cache_key=None, inout_bytes=None, _inout_cache_key=None):
+    # 로엠 등록 평균 소요일: 공홈등록일(브랜드 시트) - 최초입고일(BASE 시트)
     if _cache_key is None:
         _cache_key = "roem_avg_days_default"
     roem_bytes = _roem_bytes(io_bytes)
     if roem_bytes is None:
         return None
+    base_map = _base_style_to_first_in_map(inout_bytes, _inout_cache_key) if (inout_bytes is not None or _inout_cache_key is not None) else {}
+    if not base_map:
+        return None
     def normalize_header_text(value):
         return "".join(str(value).split())
 
     register_date_keywords = ["공홈등록일", "등록일"]
-    studio_keywords = ["스튜디오전표일자", "스튜디오 전표일자"]
-    handover_keywords = [
-        "포토인계일",
-        "포토 인계일",
-        "포토팀상품인계",
-        "포토팀 상품인계",
-        "상품인계일",
-        "상품 인계일",
-    ]
     style_keywords = ["스타일코드", "스타일"]
 
     def scan_col(preview, keys):
@@ -2186,20 +2146,18 @@ def load_roem_register_avg_days(io_bytes=None, _cache_key=None):
         if preview is None or preview.empty:
             continue
         register_col, register_row, register_hits = scan_col(preview, register_date_keywords)
-        studio_col, studio_row, studio_hits = scan_col(preview, studio_keywords)
-        handover_col, handover_row, handover_hits = scan_col(preview, handover_keywords)
         style_col, style_row, style_hits = scan_col(preview, style_keywords)
-        if register_col is None or (studio_col is None and handover_col is None):
+        if register_col is None or style_col is None:
             continue
-        score = register_hits + studio_hits + handover_hits + style_hits
+        score = register_hits + style_hits
         start_row = max(
-            [r for r in [register_row, studio_row, handover_row, style_row] if r is not None],
+            [r for r in [register_row, style_row] if r is not None],
             default=0,
         ) + 1
         if score > best_score:
             best_score = score
             best_sheet = sheet_name
-            best_cols = (register_col, studio_col, handover_col, style_col)
+            best_cols = (register_col, style_col)
             best_start_row = start_row
 
     if best_sheet is None or best_cols is None:
@@ -2212,12 +2170,10 @@ def load_roem_register_avg_days(io_bytes=None, _cache_key=None):
     if df_raw is None or df_raw.empty:
         return None
 
-    register_col, studio_col, handover_col, style_col = best_cols
+    register_col, style_col = best_cols
     data = df_raw.iloc[best_start_row if best_start_row is not None else 0 :]
     register_series = data.iloc[:, register_col]
-    studio_series = data.iloc[:, studio_col] if studio_col is not None else None
-    handover_series = data.iloc[:, handover_col] if handover_col is not None else None
-    style_series = data.iloc[:, style_col] if style_col is not None else None
+    style_series = data.iloc[:, style_col]
 
     def clean_date_series(series):
         s = series.replace(0, pd.NA).replace("0", pd.NA)
@@ -2231,27 +2187,21 @@ def load_roem_register_avg_days(io_bytes=None, _cache_key=None):
             result.loc[excel_mask] = excel_dates
         return result
 
-    style_ok = (
-        style_series.astype(str).str.strip().replace(r"^\s*$", pd.NA, regex=True).notna()
-        if style_series is not None
-        else pd.Series(True, index=data.index)
-    )
+    def norm_style(val):
+        return "".join(str(val).split()) if val is not None else ""
+
+    style_ok = style_series.astype(str).str.strip().replace(r"^\s*$", pd.NA, regex=True).notna()
     register_ok = clean_date_series(register_series).notna()
     valid = style_ok & register_ok
 
     reg_dt = clean_date_series(register_series)
-    studio_dt = clean_date_series(studio_series) if studio_series is not None else None
-    handover_dt = clean_date_series(handover_series) if handover_series is not None else None
 
     diffs = []
     for idx in data.index:
         if not bool(valid.loc[idx]):
             continue
-        base_dt = None
-        if studio_dt is not None and pd.notna(studio_dt.loc[idx]):
-            base_dt = studio_dt.loc[idx]
-        elif handover_dt is not None and pd.notna(handover_dt.loc[idx]):
-            base_dt = handover_dt.loc[idx]
+        style_norm = norm_style(style_series.loc[idx])
+        base_dt = base_map.get(style_norm) if style_norm else None
         if base_dt is None or pd.isna(reg_dt.loc[idx]):
             continue
         diffs.append((reg_dt.loc[idx] - base_dt).days)
@@ -2276,26 +2226,11 @@ def load_roem_unregistered_online_count(io_bytes=None, _cache_key=None):
         return "".join(str(value).split())
 
     register_keywords = [
-        "상품등록일",
-        "공홈등록일",
-        "공홈 등록일",
-        "등록일",
-        "온라인등록일",
-        "온라인 등록일",
-        "온라인상품등록일",
-        "온라인 상품등록일",
+        "공홈등록일"
+
     ]
     retouch_keywords = [
-        "리터칭완료일",
-        "리터칭 완료일",
-        "리터칭완료",
-        "리터칭완료일자",
-        "리터칭 완료일자",
-        "리터칭완료날짜",
-        "리터칭 완료날짜",
-        "리터칭완료일(포토팀)",
-        "리터칭완료일(촬영팀)",
-        "리터칭완료일(최종)",
+        "리터칭완료일"
     ]
     register_norm = ["".join(k.split()) for k in register_keywords]
     retouch_norm = ["".join(k.split()) for k in retouch_keywords]
@@ -2752,7 +2687,10 @@ whoau_register_days = whoau_register_days_result[0] if whoau_register_days_resul
 whoau_register_count = whoau_register_days_result[1] if whoau_register_days_result else 0
 whoau_register_header_cell = whoau_register_days_result[2] if whoau_register_days_result else None
 whoau_register_style_count = load_whoau_registered_style_count(_whoau_src[0], _cache_key=_whoau_src[1])
-whoau_register_avg_days = load_whoau_register_avg_days(_whoau_src[0], _cache_key=_whoau_src[1])
+whoau_register_avg_days = load_whoau_register_avg_days(
+    _whoau_src[0], _cache_key=_whoau_src[1],
+    inout_bytes=_inout_src[0], _inout_cache_key=_inout_src[1],
+)
 whoau_unregistered_online_count = load_whoau_unregistered_online_count(_whoau_src[0], _cache_key=_whoau_src[1])
 _clavis_src = _sources.get("clavis", (None, None))
 clavis_handover_result = load_clavis_metric_days(
@@ -2774,7 +2712,10 @@ clavis_register_days = clavis_register_days_result[0] if clavis_register_days_re
 clavis_register_count = clavis_register_days_result[1] if clavis_register_days_result else 0
 clavis_register_header_cell = clavis_register_days_result[2] if clavis_register_days_result else None
 clavis_register_style_count = 103
-clavis_register_avg_days = load_clavis_register_avg_days(_clavis_src[0], _cache_key=_clavis_src[1])
+clavis_register_avg_days = load_clavis_register_avg_days(
+    _clavis_src[0], _cache_key=_clavis_src[1],
+    inout_bytes=_inout_src[0], _inout_cache_key=_inout_src[1],
+)
 clavis_unregistered_online_count = load_clavis_unregistered_online_count(_clavis_src[0], _cache_key=_clavis_src[1])
 _mixxo_src = _sources.get("mixxo", (None, None))
 mixxo_handover_result = load_mixxo_metric_days(
@@ -2796,7 +2737,10 @@ mixxo_register_days = mixxo_register_days_result[0] if mixxo_register_days_resul
 mixxo_register_count = mixxo_register_days_result[1] if mixxo_register_days_result else 0
 mixxo_register_header_cell = mixxo_register_days_result[2] if mixxo_register_days_result else None
 mixxo_register_style_count = load_mixxo_registered_style_count(_mixxo_src[0], _cache_key=_mixxo_src[1])
-mixxo_register_avg_days = load_mixxo_register_avg_days(_mixxo_src[0], _cache_key=_mixxo_src[1])
+mixxo_register_avg_days = load_mixxo_register_avg_days(
+    _mixxo_src[0], _cache_key=_mixxo_src[1],
+    inout_bytes=_inout_src[0], _inout_cache_key=_inout_src[1],
+)
 if mixxo_register_avg_days is None:
     mixxo_register_avg_days = 4.1
 mixxo_unregistered_online_count = load_mixxo_unregistered_online_count(_mixxo_src[0], _cache_key=_mixxo_src[1])
@@ -2820,7 +2764,10 @@ roem_register_days = roem_register_days_result[0] if roem_register_days_result e
 roem_register_count = roem_register_days_result[1] if roem_register_days_result else 0
 roem_register_header_cell = roem_register_days_result[2] if roem_register_days_result else None
 roem_register_style_count = load_roem_registered_style_count(_roem_src[0], _cache_key=_roem_src[1])
-roem_register_avg_days = load_roem_register_avg_days(_roem_src[0], _cache_key=_roem_src[1])
+roem_register_avg_days = load_roem_register_avg_days(
+    _roem_src[0], _cache_key=_roem_src[1],
+    inout_bytes=_inout_src[0], _inout_cache_key=_inout_src[1],
+)
 if roem_register_avg_days is None:
     roem_register_avg_days = 3.89
 roem_unregistered_online_count = load_roem_unregistered_online_count(_roem_src[0], _cache_key=_roem_src[1])
@@ -3894,7 +3841,10 @@ def _render_dashboard():
         )
     if "평균 등록 소요일수" in monitor_df.columns:
         avg_days_by_brand = {}
-        if spao_register_avg_days is not None:
+        # 스파오: 시트의 '공홈등록소요일' 컬럼 평균(5.1일) 사용. (등록일-스튜디오전표일자) 방식은 47일 등으로 크게 나올 수 있음.
+        if spao_register_days is not None:
+            avg_days_by_brand["스파오"] = spao_register_days
+        elif spao_register_avg_days is not None:
             avg_days_by_brand["스파오"] = spao_register_avg_days
         if whoau_register_avg_days is not None:
             avg_days_by_brand["후아유"] = whoau_register_avg_days
