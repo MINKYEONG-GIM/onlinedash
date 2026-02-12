@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
-"""
-
+"""온라인 리드타임 대시보드 (Streamlit)"""
 
 import streamlit as st
 import pandas as pd
@@ -3355,10 +3354,10 @@ _missing = _missing_sheet_ids()
 if any("에블린" in m for m in _missing):
     st.warning("에블린 시트 연결 안 됨: **Secrets**에 `EB_SPREADSHEET_ID`를 추가하고, 에블린 Google 시트 URL의 ID를 넣으세요. 시트는 서비스 계정 이메일과 **편집자**로 공유해야 합니다.")
 
-st.markdown("""
+st.markdown(r"""
 <style>
     /* 전체 다크 배경 */
-    .stApp, [data-testid="stAppViewContainer"], section[data-testid="stSidebar"] {
+    .stApp, [data-testid='stAppViewContainer'], section[data-testid='stSidebar'] {
         background: #0f172a !important;
     }
     .block-container { background: #0f172a; padding-top: 2.5rem; padding-bottom: 2rem; }
@@ -3427,34 +3426,34 @@ st.markdown("""
         display: block;
     }
     /* 다운로드 버튼 우측 정렬 + 라벨 높이 맞춤 */
-    div[data-testid="column"]:has(.download-right-marker) .stDownloadButton {
+    div[data-testid='column']:has(.download-right-marker) .stDownloadButton {
         display: flex;
         justify-content: flex-end;
         align-items: center;
         height: 2.6rem;
         margin-top: 0.2rem;
     }
-    div[data-testid="column"]:has(.download-right-marker) .stDownloadButton button {
+    div[data-testid='column']:has(.download-right-marker) .stDownloadButton button {
         height: 2.6rem;
         padding: 0 1rem;
     }
-    div[data-testid="column"]:has(.qr-block) [data-testid="stToggle"] { width: 100%; min-width: 11em; }
-    div[data-testid="column"]:has(.qr-block) [data-testid="stToggle"] label { width: 100%; min-width: 11em; }
-    div[data-testid="column"]:has(.qr-block) [data-testid="stToggle"] label > div:first-of-type {
+    div[data-testid='column']:has(.qr-block) [data-testid='stToggle'] { width: 100%; min-width: 11em; }
+    div[data-testid='column']:has(.qr-block) [data-testid='stToggle'] label { width: 100%; min-width: 11em; }
+    div[data-testid='column']:has(.qr-block) [data-testid='stToggle'] label > div:first-of-type {
         min-width: 11em !important; width: 11em !important; max-width: 11em !important;
     }
     /* 토글 OFF일 때 배경 흰색 (QR·SKU 토글 공통) */
     .stToggle label div { background-color: #ffffff !important; }
     /* 토글 ON일 때 틸색 */
-    [data-testid="stToggle"] [role="switch"][aria-checked="true"] ~ div,
-    [data-testid="stToggle"] label:has(+ div [style*="background"]) div {
+    [data-testid='stToggle'] [role='switch'][aria-checked='true'] ~ div,
+    [data-testid='stToggle'] label:has(+ div [style*='background']) div {
         background: #14b8a6 !important;
     }
     /* 측정단위 토글만 3배 확대 */
-    div[data-testid="stToggle"]:has(input[id*="sty_toggle"]) [role="switch"],
-    div[data-testid="stToggle"]:has(button[id*="sty_toggle"]) [role="switch"],
-    div[data-testid="stToggle"]:has(input[id*="sty_toggle"]) div[role="switch"],
-    div[data-testid="stToggle"]:has(button[id*="sty_toggle"]) div[role="switch"] {
+    div[data-testid='stToggle']:has(input[id*='sty_toggle']) [role='switch'],
+    div[data-testid='stToggle']:has(button[id*='sty_toggle']) [role='switch'],
+    div[data-testid='stToggle']:has(input[id*='sty_toggle']) div[role='switch'],
+    div[data-testid='stToggle']:has(button[id*='sty_toggle']) div[role='switch'] {
         transform: scale(3);
         transform-origin: left center;
     }
@@ -3558,24 +3557,24 @@ st.markdown("""
     
     /* 테이블: 다크 카드 스타일 + 칸 내 텍스트 가운데 정렬 */
     .dataframe-wrapper .stDataFrame { border-radius: 8px; overflow: hidden; border: 1px solid #334155; }
-    [data-testid="stDataFrame"] td,
-    [data-testid="stDataFrame"] th,
-    [data-testid="stDataFrame"] div[data-testid="stDataFrameResizable"] td,
-    [data-testid="stDataFrame"] div[data-testid="stDataFrameResizable"] th,
-    [data-testid="stDataFrame"] [role="cell"],
-    [data-testid="stDataFrame"] [role="columnheader"] { text-align: center !important; }
-    [data-testid="stDataFrame"] > div { opacity: 1 !important; }
-    [data-testid="stDataFrame"] [role="toolbar"],
-    [data-testid="stDataFrame"] [class*="toolbar"],
-    [data-testid="stDataFrame"] [class*="Toolbar"] { opacity: 1 !important; visibility: visible !important; }
+    [data-testid='stDataFrame'] td,
+    [data-testid='stDataFrame'] th,
+    [data-testid='stDataFrame'] div[data-testid='stDataFrameResizable'] td,
+    [data-testid='stDataFrame'] div[data-testid='stDataFrameResizable'] th,
+    [data-testid='stDataFrame'] [role='cell'],
+    [data-testid='stDataFrame'] [role='columnheader'] { text-align: center !important; }
+    [data-testid='stDataFrame'] > div { opacity: 1 !important; }
+    [data-testid='stDataFrame'] [role='toolbar'],
+    [data-testid='stDataFrame'] [class*='toolbar'],
+    [data-testid='stDataFrame'] [class*='Toolbar'] { opacity: 1 !important; visibility: visible !important; }
     
     /* Streamlit 위젯: 시즌 라벨·연도·QR 텍스트 밝게 (다크 배경에서 보이게) */
-    [data-testid="stSelectbox"] label,
-    [data-testid="stSelectbox"] p,
-    [data-testid="stSelectbox"] div[data-baseweb="form-control"] label,
+    [data-testid='stSelectbox'] label,
+    [data-testid='stSelectbox'] p,
+    [data-testid='stSelectbox'] div[data-baseweb='form-control'] label,
     .stSelectbox label, .stSelectbox p { color: #f1f5f9 !important; }
-    [data-testid="stMultiSelect"] { width: 100%; }
-    div[data-testid="column"]:has([data-testid="stMultiSelect"]) { min-width: 240px; }
+    [data-testid='stMultiSelect'] { width: 100%; }
+    div[data-testid='column']:has([data-testid='stMultiSelect']) { min-width: 240px; }
     /* 마크다운으로 넣은 연도·QR 블록 텍스트 강제 밝게 */
     .stMarkdown .year-label, .stMarkdown .year-fixed, .stMarkdown .qr-block,
     .stMarkdown div.year-label, .stMarkdown div.year-fixed, .stMarkdown div.qr-block { color: #f8fafc !important; }
