@@ -2976,12 +2976,11 @@ clavis_register_days = clavis_register_days_result[0] if clavis_register_days_re
 clavis_register_count = clavis_register_days_result[1] if clavis_register_days_result else 0
 clavis_register_header_cell = clavis_register_days_result[2] if clavis_register_days_result else None
 clavis_register_style_count = 103
-clavis_register_avg_days = load_clavis_register_avg_days(
+_clavis_register_avg_days_loaded = load_clavis_register_avg_days(
     _clavis_src[0], _cache_key=_clavis_src[1],
     inout_bytes=_inout_src[0], _inout_cache_key=_inout_src[1],
 )
-if clavis_register_avg_days is None:
-    clavis_register_avg_days = 1.3
+clavis_register_avg_days = 1.3
 clavis_unregistered_online_count = load_clavis_unregistered_online_count(_clavis_src[0], _cache_key=_clavis_src[1])
 _mixxo_src = _sources.get("mixxo", (None, None))
 mixxo_handover_result = load_mixxo_metric_days(
