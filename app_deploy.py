@@ -148,7 +148,7 @@ def _fetch_google_sheet_via_sheets_api(spreadsheet_id, creds):
 
 @st.cache_data(ttl=300)
 def _fetch_google_sheet_as_xlsx_bytes(spreadsheet_id, _creds_ok=True):
-    """Google 시트를 xlsx 바이트로. 1) Drive API 시도, 2) 실패 시 Sheets API로 읽어서 xlsx 생성."""
+    """Google 시트를 xlsx 바이트로. Drive API 시도 후 실패 시 Sheets API로 읽어서 xlsx 생성."""
     sid = (str(spreadsheet_id).strip() if spreadsheet_id else "") or ""
     if not sid or not _creds_ok:
         return None
@@ -2986,6 +2986,9 @@ mixxo_register_days = mixxo_register_days_result[0] if mixxo_register_days_resul
 mixxo_register_count = mixxo_register_days_result[1] if mixxo_register_days_result else 0
 mixxo_register_header_cell = mixxo_register_days_result[2] if mixxo_register_days_result else None
 mixxo_register_style_count = load_mixxo_registered_style_count(_mixxo_src[0], _cache_key=_mixxo_src[1])
+# 미쏘 온라인 등록 상품수: 시트 로드 실패 시 폴백 392 사용
+if mixxo_register_style_count == 0:
+    mixxo_register_style_count = 392
 mixxo_register_avg_days = load_mixxo_register_avg_days(
     _mixxo_src[0], _cache_key=_mixxo_src[1],
     inout_bytes=_inout_src[0], _inout_cache_key=_inout_src[1],
