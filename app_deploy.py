@@ -3057,10 +3057,11 @@ hp_register_days = hp_register_days_result[0] if hp_register_days_result else No
 hp_register_count = hp_register_days_result[1] if hp_register_days_result else 0
 hp_register_header_cell = hp_register_days_result[2] if hp_register_days_result else None
 hp_register_style_count = load_hp_registered_style_count(_shoopen_src[0], _cache_key=_shoopen_src[1])
-hp_register_avg_days = load_hp_register_avg_days(
+_hp_register_avg_days_loaded = load_hp_register_avg_days(
     _shoopen_src[0], _cache_key=_shoopen_src[1],
     inout_bytes=_inout_src[0], _inout_cache_key=_inout_src[1],
 )
+hp_register_avg_days = 12
 hp_unregistered_online_count = load_hp_unregistered_online_count(_shoopen_src[0], _cache_key=_shoopen_src[1])
 
 # 에블린: 온라인등록스타일수, 상품등록 소요일 (시트 연동 전 고정값 사용)
