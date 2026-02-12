@@ -1,23 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 """
-온라인 리드타임 대시보드 (Streamlit)
 
-이 파일은 "한 번에 실행되는 스크립트" 형태의 Streamlit 앱입니다.
-
-### 데이터 소스
-- **기본**: Google Sheets(서비스 계정) → xlsx로 export → pandas/openpyxl로 로드
-- **Fallback(로컬 개발용)**: `DB/` 폴더의 엑셀 파일
-
-### 큰 흐름(TOC)
-- (A) 설정/Secrets/경로 상수
-- (B) Google 인증 및 시트(xlsx) 다운로드 헬퍼
-- (C) 엑셀 바이트 → DataFrame 로더(입출고/브랜드별)
-- (D) 집계/포맷/표(HTML) 생성 유틸
-- (E) UI 렌더링(섹션별 화면 구성 + 다운로드)
-
-리팩터링 원칙: **기능은 유지**하고, 섹션별 목적/경계를 명확히 하여 유지보수를 쉽게 합니다.
-"""
 
 import streamlit as st
 import pandas as pd
