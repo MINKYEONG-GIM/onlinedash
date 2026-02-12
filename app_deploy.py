@@ -3363,7 +3363,7 @@ st.markdown("""
     }
     .block-container { background: #0f172a; padding-top: 2.5rem; padding-bottom: 2rem; }
     
-    /* 타이틀: 틸 악센트 — 맨 위 잘림 방지 */
+    /* 타이틀: 틸 악센트 - 맨 위 잘림 방지 */
     .fashion-title {
         display: inline-block;
         background: #14b8a6;
@@ -3500,7 +3500,7 @@ st.markdown("""
     }
     .kpi-card-half .inline-row .label { margin-bottom: 0; }
     
-    /* 온라인 판매 프로세스 — 우향 화살표 + 시작/끝 원 */
+    /* 온라인 판매 프로세스 - 우향 화살표 + 시작/끝 원 */
     .process-flow {
         display: flex;
         align-items: center;
@@ -3681,7 +3681,7 @@ def _render_dashboard():
             style_series = style_series.replace(r"^\s*$", pd.NA, regex=True).dropna()
             whoau_inbound_styles = set(style_series.tolist())
     
-    # 입고 스타일수(브랜드별) — 위 입출고 표와 아래 모니터 표가 동일한 수치를 쓰도록 한 번만 계산
+    # 입고 스타일수(브랜드별) - 위 입출고 표와 아래 모니터 표가 동일한 수치를 쓰도록 한 번만 계산
     # 시즌 상세/KPI와 동일: 입고액(또는 누적입고액)이 1 이상인 스타일만 카운트 → 574 등
     _in_amt_col = inout_cum_in_amt_col or inout_in_amt_col
     if (
