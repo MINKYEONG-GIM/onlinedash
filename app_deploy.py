@@ -71,43 +71,10 @@ GOOGLE_SPREADSHEET_IDS = {
 
 
 # =====================================================
-# (A) 로컬 개발용 엑셀 경로(Fallback)
-# - 배포(Cloud)에서는 Google Sheets를 사용하지만, 로컬 실행을 위한 경로도 유지합니다.
+# (A) 데이터 소스 키 (Google Sheets만 사용, 로컬 xlsx 미사용)
 # =====================================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_DIR = os.path.join(BASE_DIR, "DB")
-inout_file_path = os.path.join(DB_DIR, "260202 DB4(1).xlsx")
-if not os.path.exists(inout_file_path):
-    inout_file_path = os.path.join(DB_DIR, "260202 DB(1).xlsx")
-spao_register_file_path = os.path.join(
-    DB_DIR, "★스파오 온라인_상품등록 트래킹판_20260126_상품팀(1).xlsx"
-)
-whoau_photo_file_path = os.path.join(
-    DB_DIR, "★후아유 포토팀_스타일판_촬영현황트래킹_20260127_상품팀포토팀소통용(1).xlsx"
-)
-clavis_photo_file_path = os.path.join(
-    DB_DIR, "CV온라인 2025년 스타일판_260209(1).xlsx"
-)
-mixxo_photo_file_path = os.path.join(
-    DB_DIR, "★★MI온라인 2026년 new스타일판_20260209★★상품팀_(수정)[1].xlsx"
-)
-roem_photo_file_path = os.path.join(
-    DB_DIR, "★RM온라인 2026년 스타일판_2026년 2월06일(1).xlsx"
-)
-hp_photo_file_path = os.path.join(DB_DIR, "HP온라인_스타일판.xlsx")
-
-# 키별 로컬 경로 매핑(Google 사용 불가 시 fallback)
 EXCEL_KEYS = ("inout", "spao", "whoau", "clavis", "mixxo", "roem", "shoopen", "eblin")
-PATH_MAP = {
-    "inout": inout_file_path,
-    "spao": spao_register_file_path,
-    "whoau": whoau_photo_file_path,
-    "clavis": clavis_photo_file_path,
-    "mixxo": mixxo_photo_file_path,
-    "roem": roem_photo_file_path,
-    "shoopen": hp_photo_file_path,
-    "eblin": eb_photo_file_path
-}
 
 # =====================================================
 # (B) Google 인증/다운로드 관련
@@ -266,9 +233,7 @@ update_time = datetime.now()
 @st.cache_data(ttl=300)
 def get_excel_sources():
     """
-    Google Sheets(또는 로컬 경로)에서만 데이터 소스 확보. 업로드 UI 없음.
-    반환: dict key -> (bytes 또는 None, cache_key 문자열)
-    캐시 5분 → 필터만 바꿀 때 재다운로드 안 함(체감 속도 대폭 개선).
+    Google Sheets에서만 데이터 소스 확보. 반환: dict key -> (bytes 또는 None, cache_key 문자열)
     """
     creds_ok = _get_google_credentials() is not None
     sources = {}
@@ -278,100 +243,12 @@ def get_excel_sources():
             raw = _fetch_google_sheet_as_xlsx_bytes(sheet_id, _creds_ok=creds_ok)
             if raw:
                 sources[key] = (raw, f"gs:{sheet_id}")
-                continue
-        path = PATH_MAP.get(key)
-        if path and os.path.exists(path):
-            try:
-                import sys
-                if sys.platform == "win32" and not is_zip_xlsx(path):
-                    resolved = ensure_xlsx_path(path)
-                else:
-                    resolved = path
-                if resolved and os.path.exists(resolved):
-                    with open(resolved, "rb") as f:
-                        raw = f.read()
-                    ck = f"path:{resolved}|{os.path.getmtime(resolved)}"
-                    sources[key] = (raw, ck)
-                else:
-                    sources[key] = (None, "none")
-            except Exception:
+            else:
                 sources[key] = (None, "none")
         else:
             sources[key] = (None, "none")
     return sources
 
-
-def is_zip_xlsx(path):
-    # zip 기반 xlsx 여부 체크
-    try:
-        with open(path, "rb") as f:
-            return f.read(2) == b"PK"
-    except Exception:
-        return False
-
-@st.cache_data
-def ensure_xlsx_path(original_path):
-    # xlsx가 아니면 Excel로 변환 시도 후 경로 반환
-    if not original_path or not os.path.exists(original_path):
-        return None
-    if is_zip_xlsx(original_path):
-        return original_path
-    try:
-        import tempfile
-        import uuid
-    except Exception:
-        return None
-    excel = None
-    wb = None
-    try:
-        import win32com.client
-        excel = win32com.client.DispatchEx("Excel.Application")
-    except Exception:
-        try:
-            import comtypes.client
-            excel = comtypes.client.CreateObject("Excel.Application")
-        except Exception:
-            excel = None
-    if excel is None:
-        try:
-            import subprocess
-            out_path = os.path.join(tempfile.gettempdir(), f"converted_{uuid.uuid4().hex}.xlsx")
-            ps_in = original_path.replace("'", "''")
-            ps_out = out_path.replace("'", "''")
-            ps_script = (
-                "$excel = New-Object -ComObject Excel.Application; "
-                "$excel.DisplayAlerts = $false; $excel.Visible = $false; "
-                f"$wb = $excel.Workbooks.Open('{ps_in}'); "
-                f"$wb.SaveAs('{ps_out}', 51); "
-                "$wb.Close($false); $excel.Quit();"
-            )
-            subprocess.run(
-                ["powershell", "-NoProfile", "-Command", ps_script],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            return out_path if os.path.exists(out_path) else None
-        except Exception:
-            return None
-    try:
-        excel.DisplayAlerts = False
-        excel.Visible = False
-        wb = excel.Workbooks.Open(original_path)
-        out_path = os.path.join(tempfile.gettempdir(), f"converted_{uuid.uuid4().hex}.xlsx")
-        wb.SaveAs(out_path, FileFormat=51)  # xlOpenXMLWorkbook
-        wb.Close(False)
-        excel.Quit()
-        return out_path if os.path.exists(out_path) else None
-    except Exception:
-        try:
-            if wb is not None:
-                wb.Close(False)
-            if excel is not None:
-                excel.Quit()
-        except Exception:
-            pass
-        return None
 
 def find_col(keys, df=None):
     """
@@ -444,10 +321,7 @@ def load_inout_data(io_bytes=None, _cache_key=None):
     if _cache_key is None:
         _cache_key = "default"
     if io_bytes is None or len(io_bytes) == 0:
-        if not os.path.exists(inout_file_path):
-            return pd.DataFrame()
-        with open(inout_file_path, "rb") as f:
-            io_bytes = f.read()
+        return pd.DataFrame()
     io_obj = BytesIO(io_bytes)
     excel_file = pd.ExcelFile(io_obj)
     sheet_candidates = [s for s in excel_file.sheet_names if not str(s).startswith("_")]
@@ -540,10 +414,7 @@ def load_spao_register_days(io_bytes=None, _cache_key=None):
     if _cache_key is None:
         _cache_key = "spao_reg_default"
     if io_bytes is None or len(io_bytes) == 0:
-        if not os.path.exists(spao_register_file_path):
-            return None
-        with open(spao_register_file_path, "rb") as f:
-            io_bytes = f.read()
+        return None
     io_obj = BytesIO(io_bytes)
     try:
         excel_file = pd.ExcelFile(io_obj)
@@ -592,10 +463,7 @@ def load_spao_photo_days(io_bytes=None, _cache_key=None):
     if _cache_key is None:
         _cache_key = "spao_photo_default"
     if io_bytes is None or len(io_bytes) == 0:
-        if not os.path.exists(spao_register_file_path):
-            return None
-        with open(spao_register_file_path, "rb") as f:
-            io_bytes = f.read()
+        return None
     try:
         excel_file = pd.ExcelFile(BytesIO(io_bytes))
     except Exception:
@@ -645,10 +513,7 @@ def load_spao_registered_style_count(io_bytes=None, _cache_key=None):
     if _cache_key is None:
         _cache_key = "spao_style_count_default"
     if io_bytes is None or len(io_bytes) == 0:
-        if not os.path.exists(spao_register_file_path):
-            return 0
-        with open(spao_register_file_path, "rb") as f:
-            io_bytes = f.read()
+        return 0
     try:
         from openpyxl import load_workbook
     except Exception:
@@ -709,10 +574,7 @@ def load_spao_register_avg_days(io_bytes=None, _cache_key=None, inout_bytes=None
     if _cache_key is None:
         _cache_key = "spao_avg_days_default"
     if io_bytes is None or len(io_bytes) == 0:
-        if not os.path.exists(spao_register_file_path):
-            return None
-        with open(spao_register_file_path, "rb") as f:
-            io_bytes = f.read()
+        return None
     base_map = _base_style_to_first_in_map(inout_bytes, _inout_cache_key) if (inout_bytes is not None or _inout_cache_key is not None) else {}
     if not base_map:
         return None
@@ -795,14 +657,8 @@ spao_register_avg_days = load_spao_register_avg_days(
 # (C) [후아유] 스타일판 로더/지표 추출
 # =====================================================
 def _whoau_bytes(io_bytes):
-    """(C) [후아유] 로더 공통: bytes가 없으면 로컬 파일에서 읽어오기."""
-    if io_bytes is not None and len(io_bytes) > 0:
-        return io_bytes
-    path = ensure_xlsx_path(whoau_photo_file_path) if os.path.exists(whoau_photo_file_path) else None
-    if not path or not os.path.exists(path):
-        return None
-    with open(path, "rb") as f:
-        return f.read()
+    """(C) [후아유] 로더: Google에서 받은 bytes만 사용."""
+    return io_bytes if (io_bytes is not None and len(io_bytes) > 0) else None
 
 @st.cache_data
 def load_whoau_metric_days(target_keywords, io_bytes=None, _cache_key=None):
@@ -859,40 +715,16 @@ def load_whoau_metric_days(target_keywords, io_bytes=None, _cache_key=None):
 # - bytes 확보 helper → metric_days/등록/미등록 등 지표 로더로 이어집니다.
 # =====================================================
 def _clavis_bytes(io_bytes):
-    if io_bytes is not None and len(io_bytes) > 0:
-        return io_bytes
-    path = ensure_xlsx_path(clavis_photo_file_path) if os.path.exists(clavis_photo_file_path) else None
-    if not path or not os.path.exists(path):
-        return None
-    with open(path, "rb") as f:
-        return f.read()
+    return io_bytes if (io_bytes is not None and len(io_bytes) > 0) else None
 
 def _mixxo_bytes(io_bytes):
-    if io_bytes is not None and len(io_bytes) > 0:
-        return io_bytes
-    path = ensure_xlsx_path(mixxo_photo_file_path) if os.path.exists(mixxo_photo_file_path) else None
-    if not path or not os.path.exists(path):
-        return None
-    with open(path, "rb") as f:
-        return f.read()
+    return io_bytes if (io_bytes is not None and len(io_bytes) > 0) else None
 
 def _roem_bytes(io_bytes):
-    if io_bytes is not None and len(io_bytes) > 0:
-        return io_bytes
-    path = ensure_xlsx_path(roem_photo_file_path) if os.path.exists(roem_photo_file_path) else None
-    if not path or not os.path.exists(path):
-        return None
-    with open(path, "rb") as f:
-        return f.read()
+    return io_bytes if (io_bytes is not None and len(io_bytes) > 0) else None
 
 def _hp_bytes(io_bytes):
-    if io_bytes is not None and len(io_bytes) > 0:
-        return io_bytes
-    path = ensure_xlsx_path(hp_photo_file_path) if os.path.exists(hp_photo_file_path) else None
-    if not path or not os.path.exists(path):
-        return None
-    with open(path, "rb") as f:
-        return f.read()
+    return io_bytes if (io_bytes is not None and len(io_bytes) > 0) else None
 
 @st.cache_data
 def load_clavis_metric_days(target_keywords, io_bytes=None, _cache_key=None):
@@ -2267,7 +2099,11 @@ def load_hp_registered_style_count(io_bytes=None, _cache_key=None):
     style_text = style_series.astype(str).str.strip()
     style_ok = style_text.replace(r"^\s*$", pd.NA, regex=True).notna()
     hp_mask = style_text.str.upper().str.startswith("HP", na=False)
-    valid = register_ok & style_ok & hp_mask
+    # 슈펜 시트는 단일 브랜드이므로, HP 접두사가 하나도 없으면 접두사 필터 없이 전부 인정
+    if hp_mask.any():
+        valid = register_ok & style_ok & hp_mask
+    else:
+        valid = register_ok & style_ok
     return int(style_text[valid].nunique(dropna=True))
 
 @st.cache_data
@@ -2728,7 +2564,11 @@ def load_hp_unregistered_online_count(io_bytes=None, _cache_key=None):
     style_text = style_series.astype(str).str.strip()
     style_ok = style_text.replace(r"^\s*$", pd.NA, regex=True).notna()
     hp_mask = style_text.str.upper().str.startswith("HP", na=False)
-    return int((valid & style_ok & hp_mask).sum())
+    if hp_mask.any():
+        valid = valid & style_ok & hp_mask
+    else:
+        valid = valid & style_ok
+    return int(valid.sum())
 
 @st.cache_data
 def load_roem_register_debug(io_bytes=None, _cache_key=None):
@@ -2864,10 +2704,7 @@ def load_spao_unregistered_online_count(io_bytes=None, _cache_key=None):
     if _cache_key is None:
         _cache_key = "spao_unreg_default"
     if io_bytes is None or len(io_bytes) == 0:
-        if not os.path.exists(spao_register_file_path):
-            return 0
-        with open(spao_register_file_path, "rb") as f:
-            io_bytes = f.read()
+        return 0
     spao_bytes = io_bytes
     try:
         excel_file = pd.ExcelFile(BytesIO(spao_bytes))
@@ -4625,23 +4462,21 @@ def _render_dashboard():
     
     st.markdown(build_monitor_table_html(monitor_df, register_rate_by_brand), unsafe_allow_html=True)
     
-    # 브랜드별 상품등록 모니터링 다운로드
-    def to_xlsx_bytes_monitor(df):
-        buffer = BytesIO()
+    # 브랜드별 상품등록 모니터링 다운로드 (CSV)
+    def to_csv_bytes_monitor(df):
         export_df = df[monitor_columns] if all(c in df.columns for c in monitor_columns) else df
-        export_df.to_excel(buffer, index=False, engine="openpyxl")
-        return buffer.getvalue()
+        return export_df.to_csv(index=False, encoding="utf-8-sig")
     
-    monitor_xlsx_data = to_xlsx_bytes_monitor(monitor_df)
+    monitor_csv_data = to_csv_bytes_monitor(monitor_df)
     with download_col:
         st.markdown("<div class='download-right-marker'></div>", unsafe_allow_html=True)
         monitor_download_ts = datetime.now().strftime("%Y%m%d_%H%M")
         st.download_button(
-            label="엑셀 다운로드",
-            data=monitor_xlsx_data,
-            file_name=f"브랜드별 상품등록 모니터링_{monitor_download_ts}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            key="download_monitor_xlsx",
+            label="CSV 다운로드",
+            data=monitor_csv_data,
+            file_name=f"브랜드별_상품등록_모니터링_{monitor_download_ts}.csv",
+            mime="text/csv",
+            key="download_monitor_csv",
         )
     
     # 브랜드 상세(입출고 모니터링)
@@ -5055,23 +4890,21 @@ def _render_dashboard():
     detail_df = pd.DataFrame(brand_rows)
     display_cols = ["브랜드"] + table_columns
     
-    # XLSX 다운로드 버튼 (표 위 우측 정렬)
-    def to_xlsx_bytes(df):
-        buffer = BytesIO()
+    # CSV 다운로드 버튼 (표 위 우측 정렬)
+    def to_csv_bytes(df):
         export_df = df[display_cols] if all(c in df.columns for c in display_cols) else df
-        export_df.to_excel(buffer, index=False, engine="openpyxl")
-        return buffer.getvalue()
+        return export_df.to_csv(index=False, encoding="utf-8-sig")
     
-    xlsx_data = to_xlsx_bytes(detail_df)
+    csv_data = to_csv_bytes(detail_df)
     btn_col_left, btn_col_right = st.columns([9, 1])
     with btn_col_right:
         detail_download_ts = datetime.now().strftime("%Y%m%d_%H%M")
         st.download_button(
-            label="엑셀 다운로드",
-            data=xlsx_data,
-            file_name=f"브랜드별 입출고 모니터링_{detail_download_ts}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            key="download_xlsx",
+            label="CSV 다운로드",
+            data=csv_data,
+            file_name=f"브랜드별_입출고_모니터링_{detail_download_ts}.csv",
+            mime="text/csv",
+            key="download_csv",
         )
     
     display_df = detail_df[display_cols] if all(c in detail_df.columns for c in display_cols) else detail_df
