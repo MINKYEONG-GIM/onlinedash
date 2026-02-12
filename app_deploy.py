@@ -3063,9 +3063,10 @@ hp_register_avg_days = load_hp_register_avg_days(
 )
 hp_unregistered_online_count = load_hp_unregistered_online_count(_shoopen_src[0], _cache_key=_shoopen_src[1])
 
-# 에블린: 온라인등록스타일수 (시트 연동 전 고정값 사용)
+# 에블린: 온라인등록스타일수, 상품등록 소요일 (시트 연동 전 고정값 사용)
 _eblin_src = _sources.get("eblin", (None, None))
 eblin_register_style_count = 136
+eblin_register_avg_days = 1
 
 spao_unregistered_online_count = load_spao_unregistered_online_count(_spao_src[0], _cache_key=_spao_src[1])
 
@@ -3861,6 +3862,9 @@ def _render_dashboard():
             display_days[2] = round(hp_register_avg_days, 1)
         elif hp_register_days is not None:
             display_days[2] = round(hp_register_days, 1)
+    if selected_brand == "에블린":
+        if eblin_register_avg_days is not None:
+            display_days[2] = round(eblin_register_avg_days, 1)
     
     st.markdown(
         f'<div class="section-title" style="font-size: 1.6rem;">{selected_brand} 단계별 리드타임</div>',
@@ -4185,6 +4189,8 @@ def _render_dashboard():
             avg_days_by_brand["로엠"] = roem_register_avg_days
         if hp_register_avg_days is not None:
             avg_days_by_brand["슈펜"] = hp_register_avg_days
+        if eblin_register_avg_days is not None:
+            avg_days_by_brand["에블린"] = eblin_register_avg_days
         def resolve_avg_days(brand_name):
             if brand_name in bu_labels:
                 brands = next((b for l, b in bu_groups if l == brand_name), [])
