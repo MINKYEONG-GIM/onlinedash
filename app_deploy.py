@@ -2984,10 +2984,8 @@ mixxo_register_days_result = load_mixxo_metric_days(
 mixxo_register_days = mixxo_register_days_result[0] if mixxo_register_days_result else None
 mixxo_register_count = mixxo_register_days_result[1] if mixxo_register_days_result else 0
 mixxo_register_header_cell = mixxo_register_days_result[2] if mixxo_register_days_result else None
-mixxo_register_style_count = load_mixxo_registered_style_count(_mixxo_src[0], _cache_key=_mixxo_src[1])
-# 미쏘 온라인 등록 상품수: 시트 로드 실패 시 폴백 392 사용
-if mixxo_register_style_count == 0:
-    mixxo_register_style_count = 392
+# 미쏘 온라인 등록 상품수: 고정값 392
+mixxo_register_style_count = 392
 mixxo_register_avg_days = load_mixxo_register_avg_days(
     _mixxo_src[0], _cache_key=_mixxo_src[1],
     inout_bytes=_inout_src[0], _inout_cache_key=_inout_src[1],
