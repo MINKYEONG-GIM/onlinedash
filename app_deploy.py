@@ -3063,6 +3063,10 @@ hp_register_avg_days = load_hp_register_avg_days(
 )
 hp_unregistered_online_count = load_hp_unregistered_online_count(_shoopen_src[0], _cache_key=_shoopen_src[1])
 
+# 에블린: 온라인등록스타일수 (시트 연동 전 고정값 사용)
+_eblin_src = _sources.get("eblin", (None, None))
+eblin_register_style_count = 136
+
 spao_unregistered_online_count = load_spao_unregistered_online_count(_spao_src[0], _cache_key=_spao_src[1])
 
 # =====================================================
@@ -4087,6 +4091,8 @@ def _render_dashboard():
             register_style_counts["로엠"] = roem_register_style_count
         if hp_register_style_count is not None:
             register_style_counts["슈펜"] = hp_register_style_count
+        if eblin_register_style_count is not None:
+            register_style_counts["에블린"] = eblin_register_style_count
         def has_online_register_data(brand_name):
             if brand_name in bu_labels:
                 brands = next((b for l, b in bu_groups if l == brand_name), [])
