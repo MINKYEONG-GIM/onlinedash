@@ -1510,11 +1510,23 @@ def _render_dashboard():
             season_norm = season_norm.str.extract(r"([0-9A-Za-z])", expand=False).fillna(season_series)
             result = result[season_norm.isin(selected_seasons)]
         return result
-    
+
+    def filter_year_only(df):
+        """연도(2026)만 필터, 시즌은 건드리지 않음. 밑의 입출고 모니터링 표에서 전체 시즌 표시용."""
+        if df is None or df.empty:
+            return df
+        if inout_year_col and inout_year_col in df.columns:
+            year_series = pd.to_numeric(df[inout_year_col], errors="coerce")
+            return df[year_series == 2026]
+        return df
+
     df_inout_filtered = filter_year_season(filter_inbound_rows(filter_result_rows(df_inout)))
     df_inout_table = df_inout_filtered.copy()
     df_inout_order_base = df_inout if df_inout is not None else pd.DataFrame()
     df_inout_in_base = filter_year_season(filter_result_rows(df_inout))
+    # 입출고 모니터링 표 전용: 시즌 필터 없이 연도만 적용(항상 전체 시즌)
+    df_inout_table_all_seasons = filter_year_only(filter_inbound_rows(filter_result_rows(df_inout)))
+    df_inout_in_base_all_seasons = filter_year_only(filter_result_rows(df_inout))
     if selected_brand != "브랜드 전체" and inout_brand_col and inout_brand_col in df_inout_filtered.columns:
         brand_series = df_inout_filtered[inout_brand_col].astype(str).str.replace(" ", "").str.strip()
         target_brand = selected_brand.replace(" ", "").strip()
@@ -1535,6 +1547,8 @@ def _render_dashboard():
     df_inout_filtered = apply_qr_filter(df_inout_filtered)
     df_inout_in_base = apply_qr_filter(df_inout_in_base)
     df_inout_out_base = apply_qr_filter(df_inout_table.copy())
+    df_inout_table_all_seasons = apply_qr_filter(df_inout_table_all_seasons)
+    df_inout_in_base_all_seasons = apply_qr_filter(df_inout_in_base_all_seasons)
     df_inout_in_filtered = df_inout_in_base.copy()
     if selected_brand != "브랜드 전체" and inout_brand_col and inout_brand_col in df_inout_in_filtered.columns:
         in_brand_series = df_inout_in_filtered[inout_brand_col].astype(str).str.replace(" ", "").str.strip()
@@ -2247,28 +2261,35 @@ def _render_dashboard():
         min_amount=1,
     )
     brand_order_amt = sum_by_brand(df_inout_order_base, inout_order_amt_col)
-    # brand_in_qty는 위쪽에서 입고액≥1 기준으로 이미 계산됨(입출고 표·모니터 표 공통)
-    brand_in_sku_qty = count_unique_sku_with_amount_by_brand(
-        df_inout_in_base,
+    # 입출고 모니터링 표는 위 필터와 무관하게 항상 전체 시즌 사용
+    brand_in_qty_ios = {}
+    if df_inout_in_base_all_seasons is not None and not df_inout_in_base_all_seasons.empty and inout_style_col:
+        _amt_ios = inout_cum_in_amt_col or inout_in_amt_col
+        if _amt_ios and _amt_ios in df_inout_in_base_all_seasons.columns:
+            brand_in_qty_ios = count_unique_style_with_amount_by_brand(df_inout_in_base_all_seasons, inout_style_col, _amt_ios, min_amount=1)
+        else:
+            brand_in_qty_ios = count_unique_style_by_brand(df_inout_in_base_all_seasons, inout_style_col)
+    brand_in_sku_qty_ios = count_unique_sku_with_amount_by_brand(
+        df_inout_in_base_all_seasons,
         inout_style_col,
         inout_color_col,
         inout_cum_in_amt_col or inout_in_amt_col,
         min_amount=1,
-    )
-    brand_in_amt = sum_by_brand(df_inout_in_base, inout_cum_in_amt_col or inout_in_amt_col)
-    brand_out_qty = count_unique_style_by_brand(df_inout_table, inout_style_col)
-    brand_out_sku_qty = count_unique_sku_with_amount_by_brand(
-        df_inout_table, inout_style_col, inout_color_col, inout_out_amt_col, min_amount=1
-    )
-    brand_out_amt = sum_by_brand(df_inout_table, inout_out_amt_col)
+    ) if df_inout_in_base_all_seasons is not None else {}
+    brand_in_amt_ios = sum_by_brand(df_inout_in_base_all_seasons, inout_cum_in_amt_col or inout_in_amt_col) if df_inout_in_base_all_seasons is not None else {}
+    brand_out_qty_ios = count_unique_style_by_brand(df_inout_table_all_seasons, inout_style_col) if df_inout_table_all_seasons is not None else {}
+    brand_out_sku_qty_ios = count_unique_sku_with_amount_by_brand(
+        df_inout_table_all_seasons, inout_style_col, inout_color_col, inout_out_amt_col, min_amount=1
+    ) if df_inout_table_all_seasons is not None else {}
+    brand_out_amt_ios = sum_by_brand(df_inout_table_all_seasons, inout_out_amt_col) if df_inout_table_all_seasons is not None else {}
     sale_amt_col = inout_cum_sale_amt_col or inout_sale_amt_col
-    brand_sale_sty_qty = count_unique_style_with_amount_by_brand(
-        df_inout_table, inout_style_col, sale_amt_col, min_amount=1
-    )
-    brand_sale_sku_qty = count_unique_sku_with_amount_by_brand(
-        df_inout_table, inout_style_col, inout_color_col, sale_amt_col, min_amount=1
-    )
-    brand_sale_amt = sum_by_brand(df_inout_table, inout_cum_sale_amt_col or inout_sale_amt_col)
+    brand_sale_sty_qty_ios = count_unique_style_with_amount_by_brand(
+        df_inout_table_all_seasons, inout_style_col, sale_amt_col, min_amount=1
+    ) if df_inout_table_all_seasons is not None else {}
+    brand_sale_sku_qty_ios = count_unique_sku_with_amount_by_brand(
+        df_inout_table_all_seasons, inout_style_col, inout_color_col, sale_amt_col, min_amount=1
+    ) if df_inout_table_all_seasons is not None else {}
+    brand_sale_amt_ios = sum_by_brand(df_inout_table_all_seasons, inout_cum_sale_amt_col or inout_sale_amt_col) if df_inout_table_all_seasons is not None else {}
     
     def format_table_num(value):
         if value is None or pd.isna(value):
@@ -2302,23 +2323,23 @@ def _render_dashboard():
         if "발주액" in row:
             row["발주액"] = format_amount_eok(sum_by_brands(brand_order_amt, brands))
         if "입고 STY수" in row:
-            row["입고 STY수"] = format_table_num(sum_by_brands(brand_in_qty, brands))
+            row["입고 STY수"] = format_table_num(sum_by_brands(brand_in_qty_ios, brands))
         if "입고 SKU수" in row:
-            row["입고 SKU수"] = format_table_num(sum_by_brands(brand_in_sku_qty, brands))
+            row["입고 SKU수"] = format_table_num(sum_by_brands(brand_in_sku_qty_ios, brands))
         if "입고액" in row:
-            row["입고액"] = format_amount_eok(sum_by_brands(brand_in_amt, brands))
+            row["입고액"] = format_amount_eok(sum_by_brands(brand_in_amt_ios, brands))
         if "출고 STY수" in row:
-            row["출고 STY수"] = format_table_num(sum_by_brands(brand_out_qty, brands))
+            row["출고 STY수"] = format_table_num(sum_by_brands(brand_out_qty_ios, brands))
         if "출고 SKU수" in row:
-            row["출고 SKU수"] = format_table_num(sum_by_brands(brand_out_sku_qty, brands))
+            row["출고 SKU수"] = format_table_num(sum_by_brands(brand_out_sku_qty_ios, brands))
         if "출고액" in row:
-            row["출고액"] = format_amount_eok(sum_by_brands(brand_out_amt, brands))
+            row["출고액"] = format_amount_eok(sum_by_brands(brand_out_amt_ios, brands))
         if "판매 STY수" in row:
-            row["판매 STY수"] = format_table_num(sum_by_brands(brand_sale_sty_qty, brands))
+            row["판매 STY수"] = format_table_num(sum_by_brands(brand_sale_sty_qty_ios, brands))
         if "판매 SKU수" in row:
-            row["판매 SKU수"] = format_table_num(sum_by_brands(brand_sale_sku_qty, brands))
+            row["판매 SKU수"] = format_table_num(sum_by_brands(brand_sale_sku_qty_ios, brands))
         if "판매액" in row:
-            row["판매액"] = format_amount_eok(sum_by_brands(brand_sale_amt, brands))
+            row["판매액"] = format_amount_eok(sum_by_brands(brand_sale_amt_ios, brands))
         return row
     
     def build_season_label_series(df):
@@ -2600,23 +2621,23 @@ def _render_dashboard():
             if "발주액" in row:
                 row["발주액"] = format_amount_eok(brand_order_amt.get(brand, 0))
             if "입고 STY수" in row:
-                row["입고 STY수"] = format_table_num(brand_in_qty.get(brand, 0))
+                row["입고 STY수"] = format_table_num(brand_in_qty_ios.get(brand, 0))
             if "입고 SKU수" in row:
-                row["입고 SKU수"] = format_table_num(brand_in_sku_qty.get(brand, 0))
+                row["입고 SKU수"] = format_table_num(brand_in_sku_qty_ios.get(brand, 0))
             if "입고액" in row:
-                row["입고액"] = format_amount_eok(brand_in_amt.get(brand, 0))
+                row["입고액"] = format_amount_eok(brand_in_amt_ios.get(brand, 0))
             if "출고 STY수" in row:
-                row["출고 STY수"] = format_table_num(brand_out_qty.get(brand, 0))
+                row["출고 STY수"] = format_table_num(brand_out_qty_ios.get(brand, 0))
             if "출고 SKU수" in row:
-                row["출고 SKU수"] = format_table_num(brand_out_sku_qty.get(brand, 0))
+                row["출고 SKU수"] = format_table_num(brand_out_sku_qty_ios.get(brand, 0))
             if "출고액" in row:
-                row["출고액"] = format_amount_eok(brand_out_amt.get(brand, 0))
+                row["출고액"] = format_amount_eok(brand_out_amt_ios.get(brand, 0))
             if "판매 STY수" in row:
-                row["판매 STY수"] = format_table_num(brand_sale_sty_qty.get(brand, 0))
+                row["판매 STY수"] = format_table_num(brand_sale_sty_qty_ios.get(brand, 0))
             if "판매 SKU수" in row:
-                row["판매 SKU수"] = format_table_num(brand_sale_sku_qty.get(brand, 0))
+                row["판매 SKU수"] = format_table_num(brand_sale_sku_qty_ios.get(brand, 0))
             if "판매액" in row:
-                row["판매액"] = format_amount_eok(brand_sale_amt.get(brand, 0))
+                row["판매액"] = format_amount_eok(brand_sale_amt_ios.get(brand, 0))
             brand_rows.append(row)
     
     detail_df = pd.DataFrame(brand_rows)
@@ -2645,20 +2666,20 @@ def _render_dashboard():
         import streamlit.components.v1 as components
         season_html, row_count = build_brand_season_table_html(
             display_df,
-            df_inout_table,
+            df_inout_table_all_seasons,
             sty_toggle,
             order_base_df=df_inout_order_base,
-            in_base_df=df_inout_in_base,
+            in_base_df=df_inout_in_base_all_seasons,
         )
         table_height = 120 + (row_count * 24)
         components.html(season_html, height=table_height, scrolling=True)
     except Exception:
         season_html, _ = build_brand_season_table_html(
             display_df,
-            df_inout_table,
+            df_inout_table_all_seasons,
             sty_toggle,
             order_base_df=df_inout_order_base,
-            in_base_df=df_inout_in_base,
+            in_base_df=df_inout_in_base_all_seasons,
         )
         st.markdown(season_html, unsafe_allow_html=True)
     
