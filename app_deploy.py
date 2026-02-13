@@ -981,47 +981,30 @@ def build_avg_days_cell(value_text):
     dot_html = f"<span class='rate-dot {dot_class}'></span>"
     return f"<span class='avg-cell' data-tooltip='{tooltip}'>{dot_html}{safe_cell(value_text)}</span>"
 
-rate_tooltip = (
-    "(초록불) 90% 초과&#10;"
-    "(노란불) 80% 초과&#10;"
-    "(빨간불) 80% 이하"
-)
-
-th_rate = f"""
-<th class="th-sort" data-col-index="3" data-order="desc">
-    <span class="rate-help" data-tooltip="{rate_tooltip}">
-        온라인등록율
-    </span>
-    <a class="sort-arrow" href="javascript:void(0)" role="button" data-col="3" title="정렬">↕</a>
-</th>
-"""
-
-avg_tooltip = (
-    "(초록불) 3일 이하&#10;"
-    "(노란불) 5일 이하&#10;"
-    "(빨간불) 5일 초과"
-)
-
-th_avg = f"""
-<th class="th-sort">
-    <span class="avg-help" data-tooltip="{avg_tooltip}">
-        평균 등록 소요일수
-    </span>
-</th>
-"""
+rate_tip = "(초록불) 90% 초과&#10;(노란불) 80% 초과&#10;(빨간불) 80% 이하"
+avg_tip = "(초록불) 3일 이하&#10;(노란불) 5일 이하&#10;(빨간불) 5일 초과"
+# 호버 시 툴팁 노출용 (iframe에서 CSS 툴팁이 동작하지 않아 title 사용)
+rate_tip_title = "(초록불) 90% 초과\n(노란불) 80% 초과\n(빨간불) 80% 이하"
+avg_tip_title = "(초록불) 3일 이하\n(노란불) 5일 이하\n(빨간불) 5일 초과"
 
 def _th_sort(label, col_index):
     """col_index: 1=입고스타일수, 2=온라인등록스타일수, 3=온라인등록율. 클릭 시 JS에서 정렬(새로고침 없음)."""
     inner = label + f"<a class='sort-arrow' href='javascript:void(0)' role='button' data-col='{col_index}' title='정렬'>↕</a>"
     return f"<th class='th-sort' data-col-index='{col_index}' data-order='desc'>{inner}</th>"
 
+_th_rate = (
+    "<th class='th-sort' data-col-index='3' data-order='desc'>"
+    "<span class='rate-help' title='" + html_lib.escape(rate_tip_title, quote=True).replace("\n", "&#10;") + "'>온라인<br>등록율</span>"
+    + "<a class='sort-arrow' href='javascript:void(0)' role='button' data-col='3' title='정렬'>↕</a>"
+    + "</th>"
+)
 header_monitor = (
     "<tr>"
     "<th>브랜드</th>"
     + _th_sort("입고스타일수", 1)
     + _th_sort("온라인등록<br>스타일수", 2)
-    + th_rate
-    + th_avg
+    + _th_rate
+    + f"<th><span class='avg-help' title='{html_lib.escape(avg_tip_title, quote=True).replace(chr(10), '&#10;')}'>평균 등록 소요일수<br><span style='font-size:0.8rem;font-weight:500;color:#94a3b8;'>온라인상품등록일 - 최초입고일</span></span></th>"
     "</tr>"
 )
 def _fmt(n):
