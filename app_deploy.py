@@ -413,22 +413,8 @@ def build_inout_aggregates(io_bytes):
             return f"{float(v) / 1e8:,.0f} 억 원"
         except Exception:
             return "0 억 원"
-    bu_labels = {label for label, _ in bu_groups}
-    def sum_brands(d, brands):
-        return sum(d.get(b, 0) for b in brands)
     rows = []
-    for bu_label, bu_brands in bu_groups:
-        rows.append({
-            "브랜드": bu_label,
-            "발주 STY수": fmt_num(sum_brands(brand_order_qty, bu_brands)),
-            "발주액": fmt_eok(sum_brands(brand_order_amt, bu_brands)),
-            "입고 STY수": fmt_num(sum_brands(brand_in_qty, bu_brands)),
-            "입고액": fmt_eok(sum_brands(brand_in_amt, bu_brands)),
-            "출고 STY수": fmt_num(sum_brands(brand_out_qty, bu_brands)),
-            "출고액": fmt_eok(sum_brands(brand_out_amt, bu_brands)),
-            "판매 STY수": fmt_num(sum_brands(brand_sale_qty, bu_brands)),
-            "판매액": fmt_eok(sum_brands(brand_sale_amt, bu_brands)),
-        })
+    for _, bu_brands in bu_groups:
         for b in bu_brands:
             rows.append({
                 "브랜드": b,
@@ -719,7 +705,7 @@ st.caption("브랜드명을 클릭하면 시즌별 수치를 보실 수 있습�
 inout_df = pd.DataFrame(inout_rows)
 header_inout = "<tr><th>브랜드</th><th>발주 STY수</th><th>발주액</th><th>입고 STY수</th><th>입고액</th><th>출고 STY수</th><th>출고액</th><th>판매 STY수</th><th>판매액</th></tr>"
 body_inout = "".join(
-    f"<tr class='{'bu-row' if r['브랜드'] in bu_labels else ''}'><td class='brand-cell'>{safe_cell(r['브랜드'])}</td><td>{safe_cell(r['발주 STY수'])}</td><td>{safe_cell(r['발주액'])}</td><td>{safe_cell(r['입고 STY수'])}</td><td>{safe_cell(r['입고액'])}</td><td>{safe_cell(r['출고 STY수'])}</td><td>{safe_cell(r['출고액'])}</td><td>{safe_cell(r['판매 STY수'])}</td><td>{safe_cell(r['판매액'])}</td></tr>"
+    f"<tr><td class='brand-cell'>{safe_cell(r['브랜드'])}</td><td>{safe_cell(r['발주 STY수'])}</td><td>{safe_cell(r['발주액'])}</td><td>{safe_cell(r['입고 STY수'])}</td><td>{safe_cell(r['입고액'])}</td><td>{safe_cell(r['출고 STY수'])}</td><td>{safe_cell(r['출고액'])}</td><td>{safe_cell(r['판매 STY수'])}</td><td>{safe_cell(r['판매액'])}</td></tr>"
     for _, r in inout_df.iterrows()
 )
 st.markdown(f"""
