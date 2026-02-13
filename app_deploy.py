@@ -12,8 +12,6 @@ import html as html_lib
 import streamlit as st
 import pandas as pd
 from io import BytesIO
-from st_aggrid import AgGrid, GridOptionsBuilder
-from st_aggrid.shared import JsCode
 from datetime import datetime
 from google.oauth2.service_account import Credentials
 
@@ -765,53 +763,111 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# 브랜드별 입출고 모니터링 (AgGrid 트리)
-def build_tree_df(brand_season_df, brand_order):
+# 브랜드별 입출고 모니터링 (deploy와 동일: HTML 테이블 + 브랜드 클릭 시 시즌 토글)
+TABLE_COLS = ["발주 STY수", "발주액", "입고 STY수", "입고액", "출고 STY수", "출고액", "판매 STY수", "판매액"]
+
+def _fmt_table_num(v):
+    if v is None or pd.isna(v):
+        return "0"
+    try:
+        return f"{int(round(float(v))):,}"
+    except Exception:
+        return "0"
+
+def _fmt_eok_table(v):
+    if v is None or pd.isna(v):
+        return "0 억 원"
+    try:
+        return f"{float(v) / 1e8:,.0f} 억 원"
+    except Exception:
+        return "0 억 원"
+
+def _get_season_rows(brand):
+    df = brand_season_df[brand_season_df["브랜드"] == brand].sort_values("시즌")
+    if df.empty:
+        return []
     rows = []
-    for brand in brand_order:
-        brand_df = brand_season_df[brand_season_df["브랜드"] == brand]
-        if brand_df.empty:
-            rows.append({"path": brand, "발주 STY수": 0, "발주액": 0, "입고 STY수": 0, "입고액": 0, "출고 STY수": 0, "출고액": 0, "판매 STY수": 0, "판매액": 0})
-            continue
-        total = brand_df.sum(numeric_only=True)
+    for _, r in df.iterrows():
         rows.append({
-            "path": brand,
-            "발주 STY수": int(total["발주 STY수"]), "발주액": int(total["발주액"]),
-            "입고 STY수": int(total["입고 STY수"]), "입고액": int(total["입고액"]),
-            "출고 STY수": int(total["출고 STY수"]), "출고액": int(total["출고액"]),
-            "판매 STY수": int(total["판매 STY수"]), "판매액": int(total["판매액"]),
+            "시즌": str(r["시즌"]).strip(),
+            "발주 STY수": _fmt_table_num(r["발주 STY수"]),
+            "발주액": _fmt_eok_table(r["발주액"]),
+            "입고 STY수": _fmt_table_num(r["입고 STY수"]),
+            "입고액": _fmt_eok_table(r["입고액"]),
+            "출고 STY수": _fmt_table_num(r["출고 STY수"]),
+            "출고액": _fmt_eok_table(r["출고액"]),
+            "판매 STY수": _fmt_table_num(r["판매 STY수"]),
+            "판매액": _fmt_eok_table(r["판매액"]),
         })
-        for _, row in brand_df.sort_values("시즌").iterrows():
-            s = str(row["시즌"]).strip()
-            rows.append({
-                "path": f"{brand}|{s}",
-                "발주 STY수": int(row["발주 STY수"]), "발주액": int(row["발주액"]),
-                "입고 STY수": int(row["입고 STY수"]), "입고액": int(row["입고액"]),
-                "출고 STY수": int(row["출고 STY수"]), "출고액": int(row["출고액"]),
-                "판매 STY수": int(row["판매 STY수"]), "판매액": int(row["판매액"]),
-            })
-    return pd.DataFrame(rows)
+    return rows
+
+def _build_inout_table_html(display_df):
+    cols = ["브랜드"] + TABLE_COLS
+    header_cells = "".join(f"<th>{html_lib.escape(str(c))}</th>" for c in cols)
+    body_rows = []
+    for _, row in display_df.iterrows():
+        brand_name = str(row.get("브랜드", "")).strip()
+        brand_id = f"brand-{abs(hash(brand_name))}"
+        brand_cell = (
+            "<td class='brand-cell'>"
+            f"<button type='button' class='brand-toggle' data-target='{brand_id}' aria-expanded='false'>"
+            f"<span class='label'>{html_lib.escape(brand_name)}</span>"
+            "<span class='caret'>▽</span>"
+            "</button>"
+            "</td>"
+        )
+        other_cells = "".join(
+            f"<td>{html_lib.escape(str(row.get(c, '')))}</td>" for c in TABLE_COLS
+        )
+        body_rows.append(f"<tr class='brand-row'>{brand_cell}{other_cells}</tr>")
+        for srow in _get_season_rows(brand_name):
+            season_cells = (
+                f"<td>└ {html_lib.escape(str(srow['시즌']))}</td>"
+                + "".join(f"<td>{html_lib.escape(str(srow.get(c, '')))}</td>" for c in TABLE_COLS)
+            )
+            body_rows.append(f"<tr class='season-row' data-parent='{brand_id}'>{season_cells}</tr>")
+    html = f"""
+<style>
+.brand-expand-table {{ width:100%; border:1px solid #334155; border-radius:8px; overflow:hidden; background:#1e293b; color:#f1f5f9; margin-top:0.5rem; }}
+.brand-expand-table table {{ width:100%; border-collapse:collapse; }}
+.brand-expand-table th, .brand-expand-table td {{ border:1px solid #334155; padding:6px 8px; text-align:center; font-size:0.95rem; }}
+.brand-expand-table thead th {{ background:#0f172a; color:#f1f5f9; font-weight:700; font-size:1rem; }}
+.brand-expand-table .brand-row {{ background:#111827; }}
+.brand-expand-table .brand-cell {{ text-align:left; }}
+.brand-expand-table .brand-toggle {{ all:unset; cursor:pointer; display:inline-flex; align-items:center; gap:6px; font-weight:700; color:#f1f5f9; }}
+.brand-expand-table .brand-toggle .caret {{ display:inline-block; transition:transform 0.15s ease-in-out; color:#94a3b8; font-size:0.9rem; }}
+.brand-expand-table .brand-toggle[aria-expanded="true"] .caret {{ transform:rotate(90deg); }}
+.brand-expand-table .season-row td {{ background:#0f172a; font-size:0.9rem; color:#cbd5e1; }}
+.brand-expand-table .season-row td:first-child {{ text-align:left; padding-left:18px; }}
+</style>
+<div class="brand-expand-table"><table><thead><tr>{header_cells}</tr></thead><tbody>{"".join(body_rows)}</tbody></table></div>
+<script>
+(function(){{
+  document.querySelectorAll(".season-row").forEach(function(r){{ r.style.display = "none"; }});
+  document.querySelectorAll(".brand-toggle").forEach(function(btn){{
+    btn.addEventListener("click", function(){{
+      var target = btn.getAttribute("data-target");
+      var expanded = btn.getAttribute("aria-expanded") === "true";
+      btn.setAttribute("aria-expanded", expanded ? "false" : "true");
+      document.querySelectorAll(".season-row[data-parent='" + target + "']").forEach(function(r){{
+        r.style.display = expanded ? "none" : "table-row";
+      }});
+    }});
+  }});
+}})();
+</script>
+"""
+    return html, len(body_rows)
 
 st.markdown('<div style="height:40px;"></div>', unsafe_allow_html=True)
 st.markdown('<div class="section-title">브랜드별 입출고 모니터링</div>', unsafe_allow_html=True)
 st.markdown('<div style="font-size:1.1rem;color:#cbd5e1;margin-bottom:0.5rem;">STY 기준 통계</div>', unsafe_allow_html=True)
-st.caption("브랜드 옆 화살표를 누르면 시즌별 상세를 볼 수 있습니다")
-tree_df = build_tree_df(brand_season_df, [r["브랜드"] for r in inout_rows])
-gb = GridOptionsBuilder.from_dataframe(tree_df)
-gb.configure_column("path", hide=True, width=0)
-# 금액 컬럼: 원 → "N,XXX억 원"
-eok_fmt = JsCode("function(params) { if (params.value == null) return ''; var v = Number(params.value)/1e8; return v.toLocaleString('ko-KR') + '억 원'; }")
-for col in ["발주액", "입고액", "출고액", "판매액"]:
-    gb.configure_column(col, valueFormatter=eok_fmt)
-get_data_path_js = JsCode("function(params) { var p = params.data.path; return typeof p === 'string' ? p.split('|') : (p || []); }")
-gb.configure_grid_options(
-    treeData=True,
-    getDataPath=get_data_path_js,
-    autoGroupColumnDef={
-        "headerName": "브랜드",
-        "minWidth": 180,
-        "cellRendererParams": {"suppressCount": True, "innerRenderer": None},
-    },
-    groupDefaultExpanded=0,
-)
-AgGrid(tree_df, grid_options=gb.build(), allow_unsafe_jscode=True, fit_columns_on_grid_load=True, height=500)
+display_df = pd.DataFrame(inout_rows)[["브랜드"] + TABLE_COLS]
+st.caption("브랜드명을 클릭하면 시즌별 수치를 보실 수 있습니다")
+try:
+    import streamlit.components.v1 as components
+    inout_html, row_count = _build_inout_table_html(display_df)
+    components.html(inout_html, height=min(600, 120 + row_count * 28), scrolling=True)
+except Exception:
+    inout_html, _ = _build_inout_table_html(display_df)
+    st.markdown(inout_html, unsafe_allow_html=True)
