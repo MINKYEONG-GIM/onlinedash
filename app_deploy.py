@@ -368,7 +368,7 @@ def build_style_table_all(sources):
 def build_inout_aggregates(io_bytes):
     df = load_base_inout(io_bytes, _cache_key="base")
     if df.empty:
-        return [], {}
+        return [], {}, pd.DataFrame()
     style_col = find_col(["스타일코드", "스타일"], df=df)
     brand_col = "브랜드" if "브랜드" in df.columns else None
     order_qty_col = find_col(["발주 STY", "발주수", "발주량"], df=df)
@@ -378,9 +378,11 @@ def build_inout_aggregates(io_bytes):
     sale_amt_col = find_col(["누적판매액", "판매액"], df=df)
     first_in_col = find_col(["최초입고일", "입고일"], df=df)
     if not style_col or not brand_col:
-        return [], {}
+        return [], {}, pd.DataFrame()
+    season_col = find_col(["시즌", "season"], df=df)
     df["_style"] = df[style_col].astype(str).str.strip()
     df["_brand"] = df[brand_col].astype(str).str.strip()
+    df["_season"] = df[season_col].astype(str).str.strip() if season_col and season_col in df.columns else ""
     in_ok = pd.Series(False, index=df.index)
     if first_in_col:
         in_ok = pd.to_datetime(df[first_in_col], errors="coerce").notna()
@@ -427,7 +429,26 @@ def build_inout_aggregates(io_bytes):
                 "판매 STY수": fmt_num(brand_sale_qty.get(b, 0)),
                 "판매액": fmt_eok(brand_sale_amt.get(b, 0)),
             })
-    return rows, {"brand_in_qty": brand_in_qty, "brand_out_qty": brand_out_qty, "brand_sale_qty": brand_sale_qty}
+    # 브랜드·시즌 집계 (expander용)
+    g = df.groupby(["_brand", "_season"])
+    bs_parts = []
+    for (b, s), grp in g:
+        in_grp = df[(df["_brand"] == b) & (df["_season"] == s) & df["_in"]]
+        out_grp = df[(df["_brand"] == b) & (df["_season"] == s) & df["_out"]]
+        sale_grp = df[(df["_brand"] == b) & (df["_season"] == s) & df["_sale"]]
+        bs_parts.append({
+            "브랜드": b, "시즌": s,
+            "발주 STY수": grp["_style"].nunique(),
+            "발주액": sum_amt(grp, order_amt_col) if order_amt_col else 0,
+            "입고 STY수": in_grp["_style"].nunique(),
+            "입고액": sum_amt(in_grp, in_amt_col) if in_amt_col else 0,
+            "출고 STY수": out_grp["_style"].nunique(),
+            "출고액": sum_amt(out_grp, out_amt_col) if out_amt_col else 0,
+            "판매 STY수": sale_grp["_style"].nunique(),
+            "판매액": sum_amt(grp, sale_amt_col) if sale_amt_col else 0,
+        })
+    brand_season_df = pd.DataFrame(bs_parts)
+    return rows, {"brand_in_qty": brand_in_qty, "brand_out_qty": brand_out_qty, "brand_sale_qty": brand_sale_qty}, brand_season_df
 
 # =====================================================
 # 다크 테마 CSS (deploy와 동일)
@@ -571,7 +592,7 @@ if selected_brand and selected_brand != "브랜드 전체":
     df_style = df_style[df_style["브랜드"] == selected_brand]
 
 # KPI 카드 (BASE 기준 집계, 필터 선택 브랜드 반영)
-inout_rows, inout_agg = build_inout_aggregates(base_bytes)
+inout_rows, inout_agg, brand_season_df = build_inout_aggregates(base_bytes)
 df_base = load_base_inout(base_bytes, _cache_key="base")
 
 # 브랜드 필터 적용: 특정 브랜드 선택 시 해당 브랜드만 KPI에 반영
@@ -701,18 +722,22 @@ st.markdown(f"""
 st.markdown('<div style="height:40px;"></div>', unsafe_allow_html=True)
 st.markdown('<div class="section-title">브랜드별 입출고 모니터링</div>', unsafe_allow_html=True)
 st.markdown('<div style="font-size:1.1rem;color:#cbd5e1;margin-bottom:0.5rem;">STY 기준 통계</div>', unsafe_allow_html=True)
-st.caption("브랜드명을 클릭하면 시즌별 수치를 보실 수 있습니다")
-inout_df = pd.DataFrame(inout_rows)
-header_inout = "<tr><th>브랜드</th><th>발주 STY수</th><th>발주액</th><th>입고 STY수</th><th>입고액</th><th>출고 STY수</th><th>출고액</th><th>판매 STY수</th><th>판매액</th></tr>"
-body_inout = "".join(
-    f"<tr><td class='brand-cell'>{safe_cell(r['브랜드'])}</td><td>{safe_cell(r['발주 STY수'])}</td><td>{safe_cell(r['발주액'])}</td><td>{safe_cell(r['입고 STY수'])}</td><td>{safe_cell(r['입고액'])}</td><td>{safe_cell(r['출고 STY수'])}</td><td>{safe_cell(r['출고액'])}</td><td>{safe_cell(r['판매 STY수'])}</td><td>{safe_cell(r['판매액'])}</td></tr>"
-    for _, r in inout_df.iterrows()
-)
-st.markdown(f"""
-<div class="inout-table">
-<table class="inout-table">
-<thead>{header_inout}</thead>
-<tbody>{body_inout}</tbody>
-</table>
-</div>
-""", unsafe_allow_html=True)
+st.caption("브랜드 옆 화살표를 누르면 시즌별 상세를 볼 수 있습니다")
+brand_total_df = brand_season_df.groupby("브랜드").sum(numeric_only=True).reset_index()
+order = [r["브랜드"] for r in inout_rows]
+brand_total_df = brand_total_df.set_index("브랜드").reindex(order).fillna(0).reset_index()
+for _, brand_row in brand_total_df.iterrows():
+    brand = brand_row["브랜드"]
+    cols = st.columns(9)
+    cols[0].markdown(f"**{brand}**")
+    cols[1].write(int(brand_row["발주 STY수"]))
+    cols[2].write(f"{int(brand_row['발주액']):,}")
+    cols[3].write(int(brand_row["입고 STY수"]))
+    cols[4].write(f"{int(brand_row['입고액']):,}")
+    cols[5].write(int(brand_row["출고 STY수"]))
+    cols[6].write(f"{int(brand_row['출고액']):,}")
+    cols[7].write(int(brand_row["판매 STY수"]))
+    cols[8].write(f"{int(brand_row['판매액']):,}")
+    with st.expander(f"{brand} 시즌별 상세 보기"):
+        season_df = brand_season_df[brand_season_df["브랜드"] == brand].sort_values("시즌")
+        st.dataframe(season_df, use_container_width=True)
