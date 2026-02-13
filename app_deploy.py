@@ -1443,6 +1443,10 @@ st.markdown(r"""
     [data-testid='stSelectbox'] div[data-baseweb='form-control'] label,
     .stSelectbox label, .stSelectbox p { color: #f1f5f9 !important; }
     [data-testid='stMultiSelect'] { width: 100%; }
+    [data-testid='stMultiSelect'] label,
+    [data-testid='stMultiSelect'] p,
+    [data-testid='stMultiSelect'] div[data-baseweb='form-control'] label,
+    .stMultiSelect label, .stMultiSelect p { color: #ffffff !important; }
     div[data-testid='column']:has([data-testid='stMultiSelect']) { min-width: 240px; }
     /* 마크다운으로 넣은 연도·QR 블록 텍스트 강제 밝게 */
     .stMarkdown .year-label, .stMarkdown .year-fixed, .stMarkdown .qr-block,
