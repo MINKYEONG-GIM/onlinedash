@@ -771,6 +771,17 @@ monitor_df = table_df.copy()
 monitor_df["_등록율"] = (monitor_df["온라인등록율"] * 100).astype(int).astype(str) + "%"
 monitor_df["_미등록"] = monitor_df["전체 미등록스타일"].astype(int)
 
+# 정렬: 입고스타일수 / 온라인등록 스타일수 / 온라인 등록율, 오름차순·내림차순
+sort_col_map = {"입고스타일수": "입고스타일수", "온라인등록 스타일수": "온라인등록스타일수", "온라인 등록율": "온라인등록율"}
+st.markdown('<div style="font-size:0.9rem;color:#94a3b8;margin-bottom:0.25rem;">표 정렬</div>', unsafe_allow_html=True)
+col_sort, col_order = st.columns([2, 2])
+with col_sort:
+    sort_by = st.selectbox("정렬 기준", options=list(sort_col_map.keys()), key="monitor_sort_by")
+with col_order:
+    sort_asc = st.selectbox("정렬 순서", options=["오름차순", "내림차순"], index=1, key="monitor_sort_order")
+sort_key = sort_col_map[sort_by]
+monitor_df = monitor_df.sort_values(sort_key, ascending=(sort_asc == "오름차순")).reset_index(drop=True)
+
 def safe_cell(v):
     s = html_lib.escape(str(v)) if v is not None and str(v) != "nan" else ""
     return s
