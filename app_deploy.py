@@ -495,6 +495,15 @@ def load_brand_metric_days(target_keywords, io_bytes=None, _cache_key=None, _cac
     header_cell = f"{_col_letter(col_idx)}{header_row_idx + 1}"
     return float(values.mean()), int(values.count()), header_cell
 
+# ---------------------------------------------------------------------------
+# [온라인등록 스타일수 483 vs 139] 체크리스트 (잘못된 값 나올 때 확인)
+# 1. 시즌 열 인식: 헤더가 정확히 "시즌"인 열을 쓰는지 (다른 열이 2/2024로 잡히면 과다 집계)
+# 2. 시즌 값 매칭: G2/g2/2만 허용하는지 (연도 2024, 숫자 12 등은 제외되는지)
+# 3. 공홈등록여부: "등록"인 행만 셀 때 해당 컬럼을 찾았는지 (없으면 공홈등록일만 있는 전부 포함 → 483)
+# 4. 시트 순서: 첫 번째 시트가 아닌 '시즌' 열이 있는 시트에서 G2 행이 139개인지
+# 5. 캐시: 앱 재시작 또는 60초 후 / Clear cache 후 다시 조회
+# ---------------------------------------------------------------------------
+
 @st.cache_data(ttl=60)
 def load_brand_registered_style_count(io_bytes=None, _cache_key=None, _cache_suffix="reg_count", style_prefix=None, selected_seasons=None):
     """스타일코드+공홈등록일 모두 있는 유니크 스타일 수. 시즌 필터 적용."""
@@ -580,6 +589,19 @@ def load_brand_registered_style_count(io_bytes=None, _cache_key=None, _cache_suf
         # 시즌 필터
         if selected_seasons and season_col is not None and season_col < data.shape[1]:
             norm_selected = [_norm_season_value(s) for s in selected_seasons]
+            # SP + 시즌 2: "시즌" 헤더 열이 여러 개이거나 잘못된 열이 잡혀 483 나오는 경우, G2가 실제로 있는 열 선택
+            if style_prefix and style_prefix.upper() == "SP" and norm_selected == ["2"]:
+                candidate_cols = [i for i, v in enumerate(header_vals) if i < data.shape[1] and ("시즌" in v or (v and v.strip().lower() == "season"))]
+                if candidate_cols:
+                    best_col, best_count = None, None
+                    for c in candidate_cols:
+                        raw = data.iloc[:, c].astype(str).str.strip().str.upper()
+                        g2_mask = raw.str.match(r"^G?2$", na=False)
+                        cnt = int(g2_mask.sum())
+                        if 1 <= cnt <= 500 and (best_count is None or cnt < best_count):
+                            best_col, best_count = c, cnt
+                    if best_col is not None:
+                        season_col = best_col
             mask = _season_filter_mask(data.iloc[:, season_col], norm_selected)
             # SP + 시즌 2: G2/g2/2만 허용 (연도·기타 2 포함 값 제외)
             if style_prefix and style_prefix.upper() == "SP" and norm_selected == ["2"]:
