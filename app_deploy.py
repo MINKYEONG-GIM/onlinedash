@@ -205,6 +205,54 @@ def load_base_inout(io_bytes=None, _cache_key=None):
     return df
 
 # =====================================================
+# BASE 스타일별 최초입고일 맵 (평균 등록 소요일 계산용, deploy와 동일)
+# =====================================================
+@st.cache_data(ttl=300)
+def _base_style_to_first_in_map(io_bytes=None, _cache_key=None):
+    """BASE 시트에서 스타일코드별 최초입고일(min) 맵. 반환: dict normalized_style -> datetime."""
+    df = load_base_inout(io_bytes, _cache_key=_cache_key or "inout")
+    if df.empty:
+        return {}
+    style_col = find_col(["스타일코드", "스타일"], df=df)
+    first_col = find_col(["최초입고일", "입고일"], df=df)
+    if not style_col or not first_col:
+        return {}
+    df = df.copy()
+    df["_style"] = df[style_col].astype(str).str.strip().str.replace(" ", "", regex=False)
+    numeric = pd.to_numeric(df[first_col], errors="coerce")
+    excel_mask = numeric.between(1, 60000, inclusive="both")
+    df["_first_in"] = pd.to_datetime(df[first_col], errors="coerce")
+    if excel_mask.any():
+        df.loc[excel_mask, "_first_in"] = pd.to_datetime(
+            numeric[excel_mask], unit="d", origin="1899-12-30", errors="coerce"
+        )
+    df = df[df["_first_in"].notna() & (df["_style"].str.len() > 0)]
+    if df.empty:
+        return {}
+    return df.groupby("_style")["_first_in"].min().to_dict()
+
+def _norm_season_value(val):
+    """시즌 값 정규화 (deploy와 동일)."""
+    if val is None or pd.isna(val):
+        return ""
+    try:
+        v = int(val)
+        if 1900 <= v <= 2100:
+            return ""
+        return str(v) if -100 < v < 100 else ""
+    except Exception:
+        pass
+    s = str(val).strip().replace("시즌", "").replace(" ", "").strip()
+    if s.endswith(".0") and len(s) >= 2 and s[:-2].replace("-", "").isdigit():
+        return s[0] if s[0] != "-" else (s[1] if len(s) > 2 else "")
+    if not s or (s.isdigit() and len(s) >= 3):
+        return ""
+    s = s.upper()
+    if len(s) >= 2 and s[0].isalpha():
+        return s[1]
+    return s[0]
+
+# =====================================================
 # 브랜드별 등록 시트 로드 (스타일코드, 시즌, 공홈등록일 → 온라인상품등록여부)
 # =====================================================
 def _normalize(v):
@@ -277,6 +325,95 @@ def load_brand_register_df(io_bytes=None, _cache_key=None):
         return out
 
     return pd.DataFrame()
+
+# =====================================================
+# 브랜드별 평균 등록 소요일 (공홈등록일 - 최초입고일, deploy와 동일)
+# =====================================================
+@st.cache_data(ttl=120)
+def load_brand_register_avg_days(reg_bytes=None, inout_bytes=None, _cache_key=None, _inout_cache_key=None, selected_seasons_tuple=None):
+    """등록 평균 소요일: 공홈등록일(브랜드 시트) - 최초입고일(BASE 시트). selected_seasons_tuple 있으면 시즌 필터."""
+    if not reg_bytes or len(reg_bytes) == 0:
+        return None
+    base_map = _base_style_to_first_in_map(inout_bytes, _inout_cache_key or "inout") if inout_bytes else {}
+    if not base_map:
+        return None
+    try:
+        excel_file = pd.ExcelFile(BytesIO(reg_bytes))
+    except Exception:
+        return None
+
+    def fi(header_vals, key):
+        for idx, v in enumerate(header_vals):
+            if key in _normalize(v):
+                return idx
+        return None
+
+    for sheet_name in excel_file.sheet_names:
+        try:
+            df_raw = pd.read_excel(BytesIO(reg_bytes), sheet_name=sheet_name, header=None)
+        except Exception:
+            continue
+        if df_raw is None or df_raw.empty:
+            continue
+        header_row_idx, header_vals = None, None
+        for i in range(min(30, len(df_raw))):
+            row = df_raw.iloc[i].tolist()
+            norm = [_normalize(v) for v in row]
+            if any("스타일코드" in v for v in norm) and any("공홈등록일" in v for v in norm):
+                header_row_idx, header_vals = i, norm
+                break
+        if header_row_idx is None:
+            continue
+        style_col = fi(header_vals, "스타일코드") or fi(header_vals, "스타일")
+        regdate_col = fi(header_vals, "공홈등록일")
+        season_col = fi(header_vals, "시즌")
+        if style_col is None or regdate_col is None:
+            continue
+
+        data = df_raw.iloc[header_row_idx + 1 :].copy()
+        data.columns = range(data.shape[1])
+        if selected_seasons_tuple and season_col is not None and season_col < data.shape[1]:
+            season_series = data.iloc[:, season_col].astype(str)
+            norm_season = season_series.map(_norm_season_value)
+            norm_sel = [_norm_season_value(s) for s in selected_seasons_tuple]
+            norm_sel = [s for s in norm_sel if s]
+            mask_filter = norm_season.isin(norm_sel) if norm_sel else pd.Series(True, index=data.index)
+            raw = season_series.str.strip().str.upper()
+            mask_strict = pd.Series(False, index=data.index)
+            for s in norm_sel:
+                mask_strict = mask_strict | raw.str.match(f"^G?{s}$", na=False)
+            mask = mask_filter & mask_strict if norm_sel else pd.Series(True, index=data.index)
+            data = data.loc[mask]
+        if data.empty:
+            continue
+
+        reg_series = data.iloc[:, regdate_col]
+        style_series = data.iloc[:, style_col]
+
+        def clean_date_series(series):
+            s = series.replace(0, pd.NA).replace("0", pd.NA)
+            numeric = pd.to_numeric(s, errors="coerce")
+            excel_mask = numeric.between(1, 60000, inclusive="both")
+            result = pd.to_datetime(s, errors="coerce")
+            if excel_mask.any():
+                result = result.copy()
+                result.loc[excel_mask] = pd.to_datetime(numeric[excel_mask], unit="d", origin="1899-12-30", errors="coerce")
+            return result
+
+        reg_dt = clean_date_series(reg_series)
+        style_ok = style_series.astype(str).str.strip().replace(r"^\s*$", pd.NA, regex=True).notna()
+        register_ok = reg_dt.notna()
+        diffs = []
+        for idx in data.index:
+            if not (style_ok.loc[idx] and register_ok.loc[idx]):
+                continue
+            style_norm = "".join(str(style_series.loc[idx]).split())
+            base_dt = base_map.get(style_norm)
+            if base_dt is None or pd.isna(reg_dt.loc[idx]):
+                continue
+            diffs.append((reg_dt.loc[idx] - base_dt).days)
+        return float(sum(diffs)) / len(diffs) if diffs else None
+    return None
 
 # =====================================================
 # 전체 스타일 테이블 (BASE + 각 브랜드 시트 병합)
@@ -764,6 +901,25 @@ table_df["전체 미등록스타일"] = table_df["입고스타일수"] - table_d
 table_df["등록수"] = table_df["온라인등록스타일수"]
 table_df["평균 등록 소요일수"] = "-"
 table_df["미분배(분배팀)"] = "-"
+# 평균 등록 소요일수: 공홈등록일 - 최초입고일 (deploy와 동일)
+base_bytes = sources.get("inout", (None, None))[0]
+_season_tuple = tuple(selected_seasons) if selected_seasons else None
+for brand_name in table_df["브랜드"].unique():
+    if brand_name in NO_REG_SHEET_BRANDS:
+        continue
+    brand_key = BRAND_TO_KEY.get(brand_name)
+    if not brand_key:
+        continue
+    reg_bytes = sources.get(brand_key, (None, None))[0]
+    if not reg_bytes:
+        continue
+    avg_days = load_brand_register_avg_days(
+        reg_bytes, base_bytes,
+        _cache_key=brand_key, _inout_cache_key="inout",
+        selected_seasons_tuple=_season_tuple,
+    )
+    if avg_days is not None:
+        table_df.loc[table_df["브랜드"] == brand_name, "평균 등록 소요일수"] = f"{avg_days:.1f}"
 # 상품등록 시트 없는 브랜드: 등록 관련 수치는 표시용 '-' (정렬 시 하단으로)
 for b in NO_REG_SHEET_BRANDS:
     if b in table_df["브랜드"].values:
