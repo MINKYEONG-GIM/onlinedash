@@ -491,21 +491,6 @@ DARK_CSS = """
     }
     .kpi-card-dark .label { font-size: 1.1rem; margin-bottom: 0.3rem; color: #cbd5e1; }
     .kpi-card-dark .value { font-size: 1rem; font-weight: 700; color: #f1f5f9; }
-    .kpi-card-half {
-        background: #1e293b;
-        color: #f1f5f9;
-        border-radius: 10px;
-        padding: 0.5rem 1rem;
-        text-align: center;
-        font-weight: 600;
-        height: 50px;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        border: 1px solid #334155;
-    }
-    .kpi-card-half .label { font-size: 0.9rem; color: #cbd5e1; }
-    .kpi-card-half .value { font-size: 0.9rem; font-weight: 700; }
     .monitor-table {
         width: 100%;
         border-collapse: collapse;
@@ -688,32 +673,10 @@ else:
 
 in_amt_col = find_col(["누적입고액", "입고액"], df=df_base)
 out_amt_col = find_col(["출고액"], df=df_base)
-# 판매액 컬럼 (외형매출 기준)
 sale_amt_col = find_col(["누적 판매액[외형매출]", "누적판매액", "판매액"], df=df_base)
-
-# 채널 컬럼 탐지
-channel_col = find_col(["채널(Now)"], df=df_base)
-
 total_in_amt = pd.to_numeric(df_base[in_amt_col], errors="coerce").sum() if in_amt_col and in_amt_col in df_base.columns else 0
 total_out_amt = pd.to_numeric(df_base[out_amt_col], errors="coerce").sum() if out_amt_col and out_amt_col in df_base.columns else 0
-
-total_sale_amt = 0
-online_sale_amt = 0
-offline_sale_amt = 0
-
-if sale_amt_col and sale_amt_col in df_base.columns:
-    sale_series = pd.to_numeric(df_base[sale_amt_col], errors="coerce").fillna(0)
-    total_sale_amt = sale_series.sum()
-
-    if channel_col and channel_col in df_base.columns:
-        channel_series = df_base[channel_col].astype(str).str.strip()
-
-        online_mask = channel_series == "온라인매장"
-        online_sale_amt = sale_series[online_mask].sum()
-        offline_sale_amt = sale_series[~online_mask].sum()
-    else:
-        # 채널 컬럼이 없으면 전체를 오프라인으로 처리
-        offline_sale_amt = total_sale_amt
+total_sale_amt = pd.to_numeric(df_base[sale_amt_col], errors="coerce").sum() if sale_amt_col and sale_amt_col in df_base.columns else 0
 
 def _eok(x):
     try:
@@ -722,33 +685,23 @@ def _eok(x):
         return "0"
 st.markdown("<div style='margin-top:1rem;'></div>", unsafe_allow_html=True)
 
-k1, k2, k3, k_right = st.columns([1, 1, 1, 1])
-
+k1, k2, k3 = st.columns(3)
 with k1:
     st.markdown(
         f'<div class="kpi-card-dark"><span class="label">입고</span>'
         f'<span class="value">{_eok(total_in_amt)} 억원 / {int(total_in_sty):,}STY</span></div>',
         unsafe_allow_html=True
     )
-
 with k2:
     st.markdown(
         f'<div class="kpi-card-dark"><span class="label">출고</span>'
         f'<span class="value">{_eok(total_out_amt)} 억원 / {int(total_out_sty):,}STY</span></div>',
         unsafe_allow_html=True
     )
-
 with k3:
     st.markdown(
         f'<div class="kpi-card-dark"><span class="label">전체 판매</span>'
         f'<span class="value">{_eok(total_sale_amt)} 억원 / {int(total_sale_sty):,}STY</span></div>',
-        unsafe_allow_html=True
-    )
-
-with k_right:
-    st.markdown(
-        f'<div class="kpi-card-half" style="margin-bottom:4px;"><span class="label">온라인 판매</span><span class="value">{_eok(online_sale_amt)} 억원</span></div>'
-        f'<div class="kpi-card-half"><span class="label">오프라인 판매</span><span class="value">{_eok(offline_sale_amt)} 억원</span></div>',
         unsafe_allow_html=True
     )
 
