@@ -410,6 +410,20 @@ def _col_letter(n):
         s = chr(65 + r) + s
     return s
 
+def _norm_season_value(val):
+    """시트 시즌 셀 값을 필터 옵션과 비교할 수 있게 정규화 (예: '2시즌', '시즌2' -> '2')."""
+    if val is None or pd.isna(val):
+        return ""
+    s = str(val).strip().replace("시즌", "").replace(" ", "").strip()
+    return s[:1] if s else ""
+
+def _season_filter_mask(series, selected_seasons):
+    """데이터 시리즈에서 selected_seasons에 포함되는 행만 True. selected_seasons 비어있으면 전부 True."""
+    if not selected_seasons:
+        return pd.Series(True, index=series.index)
+    norm = series.astype(str).map(_norm_season_value)
+    return norm.isin([str(s).strip()[:1] for s in selected_seasons])
+
 @st.cache_data
 def load_brand_metric_days(target_keywords, io_bytes=None, _cache_key=None, _cache_suffix="metric"):
     """트래킹판에서 특정 소요일 컬럼 평균 산출. (평균, 표본수, 헤더셀) 또는 None."""
@@ -458,10 +472,11 @@ def load_brand_metric_days(target_keywords, io_bytes=None, _cache_key=None, _cac
     return float(values.mean()), int(values.count()), header_cell
 
 @st.cache_data
-def load_brand_registered_style_count(io_bytes=None, _cache_key=None, _cache_suffix="reg_count", style_prefix=None):
-    """트래킹판에서 스타일코드+공홈등록일 모두 있는 행의 유니크 스타일 수. style_prefix 있으면 해당 접두어만."""
+def load_brand_registered_style_count(io_bytes=None, _cache_key=None, _cache_suffix="reg_count", style_prefix=None, selected_seasons=None):
+    """트래킹판에서 스타일코드+공홈등록일 모두 있는 행의 유니크 스타일 수. selected_seasons 있으면 시즌 열 기준 필터."""
     if _cache_key is None:
         _cache_key = f"brand_{_cache_suffix}_default"
+    _season_key = tuple(sorted(selected_seasons)) if selected_seasons else ()
     b = _bytes(io_bytes)
     if b is None:
         return 0
@@ -498,10 +513,14 @@ def load_brand_registered_style_count(io_bytes=None, _cache_key=None, _cache_suf
 
         style_col = find_col("스타일코드") or find_col("스타일")
         register_col = find_col("공홈등록일") or find_col("등록일")
+        season_col = find_col("시즌")
         if style_col is None or register_col is None:
             continue
 
-        data = df_raw.iloc[header_row_idx + 1 :]
+        data = df_raw.iloc[header_row_idx + 1 :].copy()
+        if selected_seasons and season_col is not None and season_col < data.shape[1]:
+            mask = _season_filter_mask(data.iloc[:, season_col], selected_seasons)
+            data = data.loc[mask]
         style_set = set()
         for _, row in data.iterrows():
             style_val = row.iloc[style_col] if style_col < len(row) else None
@@ -515,8 +534,8 @@ def load_brand_registered_style_count(io_bytes=None, _cache_key=None, _cache_suf
     return 0
 
 @st.cache_data
-def load_brand_register_avg_days(io_bytes=None, _cache_key=None, inout_bytes=None, _inout_cache_key=None, _cache_suffix="avg_days"):
-    """등록 평균 소요일: 공홈등록일(브랜드 시트) - 최초입고일(BASE 시트)"""
+def load_brand_register_avg_days(io_bytes=None, _cache_key=None, inout_bytes=None, _inout_cache_key=None, _cache_suffix="avg_days", selected_seasons=None):
+    """등록 평균 소요일: 공홈등록일(브랜드 시트) - 최초입고일(BASE 시트). selected_seasons 있으면 시즌 열 기준 필터."""
     if _cache_key is None:
         _cache_key = f"brand_{_cache_suffix}_default"
     b = _bytes(io_bytes)
@@ -550,7 +569,16 @@ def load_brand_register_avg_days(io_bytes=None, _cache_key=None, inout_bytes=Non
                 best_hits, best_col, best_header_row = hits, col_idx, header_row
         return best_col, best_header_row, best_hits
 
-    best_sheet, best_cols, best_start_row, best_score = None, None, None, -1
+    def find_season_col(preview, header_row_idx):
+        if header_row_idx is None or preview is None or header_row_idx >= len(preview):
+            return None
+        row = preview.iloc[header_row_idx].tolist()
+        for idx, v in enumerate(row):
+            if "시즌" in normalize(v):
+                return idx
+        return None
+
+    best_sheet, best_cols, best_start_row, best_score, best_header_row = None, None, None, -1, None
     for sheet_name in excel_file.sheet_names:
         try:
             preview = pd.read_excel(BytesIO(b), sheet_name=sheet_name, header=None)
@@ -566,6 +594,7 @@ def load_brand_register_avg_days(io_bytes=None, _cache_key=None, inout_bytes=Non
         start_row = max([r for r in [reg_row, style_row] if r is not None], default=0) + 1
         if score > best_score:
             best_score, best_sheet, best_cols, best_start_row = score, sheet_name, (reg_col, style_col), start_row
+            best_header_row = max(reg_row, style_row) if reg_row is not None and style_row is not None else reg_row or style_row
 
     if best_sheet is None or best_cols is None:
         return None
@@ -576,7 +605,12 @@ def load_brand_register_avg_days(io_bytes=None, _cache_key=None, inout_bytes=Non
     if df_raw is None or df_raw.empty:
         return None
     register_col, style_col = best_cols
-    data = df_raw.iloc[best_start_row or 0:]
+    data = df_raw.iloc[best_start_row or 0:].copy()
+    if selected_seasons and best_header_row is not None:
+        season_col = find_season_col(df_raw, best_header_row)
+        if season_col is not None and season_col < data.shape[1]:
+            mask = _season_filter_mask(data.iloc[:, season_col], selected_seasons)
+            data = data.loc[mask]
     register_series = data.iloc[:, register_col]
     style_series = data.iloc[:, style_col]
 
