@@ -12,6 +12,8 @@ import html as html_lib
 import streamlit as st
 import pandas as pd
 from io import BytesIO
+from st_aggrid import AgGrid, GridOptionsBuilder
+from st_aggrid.shared import JsCode
 from datetime import datetime
 from google.oauth2.service_account import Credentials
 
@@ -718,26 +720,43 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# 브랜드별 입출고 모니터링
+# 브랜드별 입출고 모니터링 (AgGrid 트리)
+def build_tree_df(brand_season_df, brand_order):
+    rows = []
+    for brand in brand_order:
+        brand_df = brand_season_df[brand_season_df["브랜드"] == brand]
+        if brand_df.empty:
+            rows.append({"path": [brand], "발주 STY수": 0, "발주액": 0, "입고 STY수": 0, "입고액": 0, "출고 STY수": 0, "출고액": 0, "판매 STY수": 0, "판매액": 0})
+            continue
+        total = brand_df.sum(numeric_only=True)
+        rows.append({
+            "path": [brand],
+            "발주 STY수": int(total["발주 STY수"]), "발주액": int(total["발주액"]),
+            "입고 STY수": int(total["입고 STY수"]), "입고액": int(total["입고액"]),
+            "출고 STY수": int(total["출고 STY수"]), "출고액": int(total["출고액"]),
+            "판매 STY수": int(total["판매 STY수"]), "판매액": int(total["판매액"]),
+        })
+        for _, row in brand_df.sort_values("시즌").iterrows():
+            rows.append({
+                "path": [brand, str(row["시즌"])],
+                "발주 STY수": int(row["발주 STY수"]), "발주액": int(row["발주액"]),
+                "입고 STY수": int(row["입고 STY수"]), "입고액": int(row["입고액"]),
+                "출고 STY수": int(row["출고 STY수"]), "출고액": int(row["출고액"]),
+                "판매 STY수": int(row["판매 STY수"]), "판매액": int(row["판매액"]),
+            })
+    return pd.DataFrame(rows)
+
 st.markdown('<div style="height:40px;"></div>', unsafe_allow_html=True)
 st.markdown('<div class="section-title">브랜드별 입출고 모니터링</div>', unsafe_allow_html=True)
 st.markdown('<div style="font-size:1.1rem;color:#cbd5e1;margin-bottom:0.5rem;">STY 기준 통계</div>', unsafe_allow_html=True)
 st.caption("브랜드 옆 화살표를 누르면 시즌별 상세를 볼 수 있습니다")
-brand_total_df = brand_season_df.groupby("브랜드").sum(numeric_only=True).reset_index()
-order = [r["브랜드"] for r in inout_rows]
-brand_total_df = brand_total_df.set_index("브랜드").reindex(order).fillna(0).reset_index()
-for _, brand_row in brand_total_df.iterrows():
-    brand = brand_row["브랜드"]
-    cols = st.columns(9)
-    cols[0].markdown(f"**{brand}**")
-    cols[1].write(int(brand_row["발주 STY수"]))
-    cols[2].write(f"{int(brand_row['발주액']):,}")
-    cols[3].write(int(brand_row["입고 STY수"]))
-    cols[4].write(f"{int(brand_row['입고액']):,}")
-    cols[5].write(int(brand_row["출고 STY수"]))
-    cols[6].write(f"{int(brand_row['출고액']):,}")
-    cols[7].write(int(brand_row["판매 STY수"]))
-    cols[8].write(f"{int(brand_row['판매액']):,}")
-    with st.expander(f"{brand} 시즌별 상세 보기"):
-        season_df = brand_season_df[brand_season_df["브랜드"] == brand].sort_values("시즌")
-        st.dataframe(season_df, use_container_width=True)
+tree_df = build_tree_df(brand_season_df, [r["브랜드"] for r in inout_rows])
+gb = GridOptionsBuilder.from_dataframe(tree_df)
+gb.configure_column("path", hide=True)
+gb.configure_grid_options(
+    treeData=True,
+    getDataPath=JsCode("function(params) { return params.data.path; }"),
+    autoGroupColumnDef={"headerName": "브랜드", "cellRendererParams": {"suppressCount": True}},
+    groupDefaultExpanded=0,
+)
+AgGrid(tree_df, grid_options=gb.build(), allow_unsafe_jscode=True, fit_columns_on_grid_load=True, height=500)
