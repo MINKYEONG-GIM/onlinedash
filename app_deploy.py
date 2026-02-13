@@ -489,7 +489,7 @@ def load_brand_metric_days(target_keywords, io_bytes=None, _cache_key=None, _cac
 
 @st.cache_data
 def load_brand_registered_style_count(io_bytes=None, _cache_key=None, _cache_suffix="reg_count", style_prefix=None, selected_seasons=None):
-    """트래킹판에서 스타일코드+공홈등록일 모두 있는 행의 유니크 스타일 수. selected_seasons 있으면 시즌 열 기준 필터."""
+    """스타일코드+공홈등록일 모두 있는 유니크 스타일 수. 시즌 필터 적용."""
     if _cache_key is None:
         _cache_key = f"brand_{_cache_suffix}_default"
     b = _bytes(io_bytes)
@@ -510,6 +510,8 @@ def load_brand_registered_style_count(io_bytes=None, _cache_key=None, _cache_suf
             continue
         if df_raw is None or df_raw.empty:
             continue
+
+        # 헤더 찾기
         header_row_idx, header_vals = None, None
         for i in range(min(30, len(df_raw))):
             row = df_raw.iloc[i].tolist()
@@ -522,7 +524,7 @@ def load_brand_registered_style_count(io_bytes=None, _cache_key=None, _cache_suf
 
         def find_col(key):
             for idx, v in enumerate(header_vals):
-                if v == key or (key in v):
+                if key in v:
                     return idx
             return None
 
@@ -547,31 +549,33 @@ def load_brand_registered_style_count(io_bytes=None, _cache_key=None, _cache_suf
             continue
 
         data = df_raw.iloc[header_row_idx + 1 :].copy()
+
+        # 시즌 필터
         if selected_seasons and season_col is not None and season_col < data.shape[1]:
-            mask = _season_filter_mask(data.iloc[:, season_col], selected_seasons)
+            norm_selected = [_norm_season_value(s) for s in selected_seasons]
+            mask = _season_filter_mask(data.iloc[:, season_col], norm_selected)
             data = data.loc[mask]
 
-        def _is_valid_reg_date(v):
-            """공홈등록일로 유효한 값만: None, NaN, 빈문자, 0, '0', '0.0' 제외."""
-            if v is None or pd.isna(v):
-                return False
-            s = str(v).strip()
-            if not s or s in ("0", "0.0"):
-                return False
-            if isinstance(v, (int, float)) and v == 0:
-                return False
-            return True
+        # 공홈등록일 존재 체크 (0, '0', '0.0', 빈값 제외)
+        reg_series = data.iloc[:, register_col]
+        reg_str = reg_series.astype(str).str.strip()
+        reg_numeric = pd.to_numeric(reg_series, errors="coerce")
+        reg_ok = (
+            reg_series.notna()
+            & (reg_str != "")
+            & ~reg_str.isin(["0", "0.0"])
+            & ((reg_numeric.isna()) | (reg_numeric != 0))
+        )
 
-        style_set = set()
-        for _, row in data.iterrows():
-            style_val = row.iloc[style_col] if style_col < len(row) else None
-            reg_val = row.iloc[register_col] if register_col < len(row) else None
-            style_text = "" if style_val is None else str(style_val).strip()
-            reg_ok = _is_valid_reg_date(reg_val)
-            if reg_ok and style_text:
-                if style_prefix is None or style_text.upper().startswith(style_prefix):
-                    style_set.add(style_text)
-        return int(len(style_set))
+        # 스타일코드 존재 체크 + style_prefix
+        style_series = data.iloc[:, style_col].astype(str).str.strip()
+        style_ok = (style_series != "") & style_series.notna()
+        if style_prefix:
+            style_ok = style_ok & style_series.str.upper().str.startswith(style_prefix.upper(), na=False)
+
+        # 유니크 스타일코드만 카운트
+        unique_styles = style_series.loc[reg_ok & style_ok].unique()
+        return int(len(unique_styles))
     return 0
 
 @st.cache_data
