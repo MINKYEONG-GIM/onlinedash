@@ -710,11 +710,14 @@ st.markdown("<div style='margin-top:80px;'></div>", unsafe_allow_html=True)
 st.markdown("---")
 st.markdown('<div class="section-title">브랜드별 상품등록 모니터링</div>', unsafe_allow_html=True)
 
-# 표 전용 (필터 무시, 전체 브랜드)
-df_style_unique = df_style_all.drop_duplicates(subset=["브랜드", "시즌", "스타일코드"])
+# 표: 브랜드는 항상 전체, 수치는 시즌 필터만 반영
+all_brands = sorted(df_style_all["브랜드"].unique())
+df_for_table = df_style_all.copy()
+if selected_seasons and set(selected_seasons) != set(seasons):
+    df_for_table = df_for_table[df_for_table["시즌"].astype(str).str.strip().isin(selected_seasons)]
+df_style_unique = df_for_table.drop_duplicates(subset=["브랜드", "시즌", "스타일코드"])
 in_count_all = df_style_unique[df_style_unique["입고 여부"] == "Y"].groupby("브랜드")["스타일코드"].nunique()
 reg_count_all = df_style_unique[df_style_unique["온라인상품등록여부"] == "등록"].groupby("브랜드")["스타일코드"].nunique()
-all_brands = sorted(df_style_unique["브랜드"].unique())
 table_df = pd.DataFrame({"브랜드": all_brands})
 table_df["입고스타일수"] = table_df["브랜드"].map(in_count_all).fillna(0).astype(int)
 table_df["온라인등록스타일수"] = table_df["브랜드"].map(reg_count_all).fillna(0).astype(int)
