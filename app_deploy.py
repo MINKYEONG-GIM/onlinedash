@@ -476,7 +476,6 @@ def load_brand_registered_style_count(io_bytes=None, _cache_key=None, _cache_suf
     """트래킹판에서 스타일코드+공홈등록일 모두 있는 행의 유니크 스타일 수. selected_seasons 있으면 시즌 열 기준 필터."""
     if _cache_key is None:
         _cache_key = f"brand_{_cache_suffix}_default"
-    _season_key = tuple(sorted(selected_seasons)) if selected_seasons else ()
     b = _bytes(io_bytes)
     if b is None:
         return 0
@@ -645,8 +644,8 @@ _RETOUCH_KEYWORDS = ["리터칭완료일", "리터칭 완료일", "리터칭완�
 _STYLE_KEYWORDS = ["스타일코드", "스타일"]
 
 @st.cache_data
-def load_brand_unregistered_online_count(io_bytes=None, _cache_key=None, _cache_suffix="unreg", style_prefix=None):
-    """상품등록일 비어있고 리터칭완료일 있는 행 수. style_prefix 있으면 해당 접두어만."""
+def load_brand_unregistered_online_count(io_bytes=None, _cache_key=None, _cache_suffix="unreg", style_prefix=None, selected_seasons=None):
+    """상품등록일 비어있고 리터칭완료일 있는 행 수. selected_seasons 있으면 시즌 열 기준 필터."""
     if _cache_key is None:
         _cache_key = f"brand_{_cache_suffix}_default"
     b = _bytes(io_bytes)
@@ -675,7 +674,7 @@ def load_brand_unregistered_online_count(io_bytes=None, _cache_key=None, _cache_
                 best_hits, best_col, best_header_row = hits, col_idx, header_row
         return best_col, best_header_row, best_hits
 
-    best_sheet, best_cols, best_start_row, best_score = None, None, None, -1
+    best_sheet, best_cols, best_start_row, best_score, best_header_row = None, None, None, -1, None
     for sheet_name in excel_file.sheet_names:
         try:
             preview = pd.read_excel(BytesIO(b), sheet_name=sheet_name, header=None)
@@ -692,6 +691,7 @@ def load_brand_unregistered_online_count(io_bytes=None, _cache_key=None, _cache_
         start_row = max([r for r in [reg_row, retouch_row, style_row] if r is not None], default=0) + 1
         if score > best_score:
             best_score, best_sheet, best_cols, best_start_row = score, sheet_name, (reg_col, retouch_col, style_col), start_row
+            best_header_row = max(r for r in [reg_row, retouch_row, style_row] if r is not None)
 
     if best_sheet is None or best_cols is None:
         return 0
@@ -702,7 +702,14 @@ def load_brand_unregistered_online_count(io_bytes=None, _cache_key=None, _cache_
     if df_raw is None or df_raw.empty:
         return 0
     register_col, retouch_col, style_col = best_cols
-    data = df_raw.iloc[best_start_row or 0:]
+    data = df_raw.iloc[best_start_row or 0:].copy()
+    if selected_seasons and best_header_row is not None:
+        for col_idx in range(df_raw.shape[1]):
+            if col_idx < len(df_raw.iloc[best_header_row]) and "시즌" in normalize_header_text(df_raw.iloc[best_header_row, col_idx]):
+                if col_idx < data.shape[1]:
+                    mask = _season_filter_mask(data.iloc[:, col_idx], selected_seasons)
+                    data = data.loc[mask]
+                break
     register_series = data.iloc[:, register_col]
     retouch_series = data.iloc[:, retouch_col]
     style_series = data.iloc[:, style_col] if style_col is not None else None
@@ -749,6 +756,23 @@ BRAND_METRICS_CFG = {
     "에블린": {"src": "eblin", "handover": [], "shooting": [], "register": [], "style_prefix": None, "vname": "eblin", "shoot_suffix": "shooting", "override_register_style_count": 136, "override_register_avg_days": 1, "hide_undist": True},
 }
 UNDIST_HIDE_BRANDS = {b for b, cfg in BRAND_METRICS_CFG.items() if cfg.get("hide_undist")}
+
+@st.cache_data
+def get_season_filtered_monitor_metrics(_selected_seasons_tuple, _inout_cache_key):
+    """필터에서 선택한 시즌에만 해당하는 모니터용 지표(등록 스타일수, 평균 소요일, 미등록 수). _selected_seasons_tuple은 hashable."""
+    if not _selected_seasons_tuple:
+        return None
+    _inout = _sources.get("inout", (None, None))
+    result = {}
+    for brand_name, cfg in BRAND_METRICS_CFG.items():
+        src = _sources.get(cfg["src"], (None, None))
+        io, ck = src[0], src[1]
+        suffix = cfg["src"]
+        rsc = load_brand_registered_style_count(io, _cache_key=ck, _cache_suffix=f"{suffix}_reg_count", style_prefix=cfg["style_prefix"], selected_seasons=_selected_seasons_tuple)
+        rad = load_brand_register_avg_days(io, _cache_key=ck, inout_bytes=_inout[0], _inout_cache_key=_inout[1], _cache_suffix=f"{suffix}_avg", selected_seasons=_selected_seasons_tuple)
+        uoc = load_brand_unregistered_online_count(io, _cache_key=ck, _cache_suffix=f"{suffix}_unreg", style_prefix=cfg["style_prefix"], selected_seasons=_selected_seasons_tuple)
+        result[brand_name] = {"register_style_count": rsc, "register_avg_days": rad, "register_days": None, "unregistered_count": uoc or 0}
+    return result
 
 def _load_brand_metrics():
     """브랜드별 메트릭 로드. 설정만 사용, 브랜드명 분기 없음."""
@@ -1454,7 +1478,10 @@ def _render_dashboard():
                 st.markdown('<div class="year-fixed">2026년</div>', unsafe_allow_html=True)
             with col_season:
                 seasons = ["1", "2", "A", "S", "F"]
-                selected_seasons = st.multiselect("시즌", seasons, default=seasons, key="season_filter")
+                selected_seasons = st.multiselect("시즌", seasons, default=["2"], key="season_filter")
+        # 모니터 표: 시즌 필터 선택 시 해당 시즌만 반영한 지표 사용
+        use_season_filter = bool(selected_seasons) and set(selected_seasons) != set(seasons)
+        BM_monitor = get_season_filtered_monitor_metrics(tuple(sorted(selected_seasons)), _inout_src[1]) if use_season_filter else BM
         with col_brand_col:
             brand_options = ["브랜드 전체"] + brands_list
             selected_brand = st.selectbox("브랜드", brand_options, key="brand_filter", index=0)
@@ -1780,7 +1807,7 @@ def _render_dashboard():
             "미분배(분배팀)",
         ] = "-"
     if "온라인 등록 스타일수" in monitor_df.columns:
-        register_style_counts = {b: BM[b].get("register_style_count") for b in BM if BM[b].get("register_style_count") is not None}
+        register_style_counts = {b: BM_monitor[b].get("register_style_count") for b in BM_monitor if BM_monitor[b].get("register_style_count") is not None}
         def has_online_register_data(brand_name):
             if brand_name in bu_labels:
                 brands = next((b for l, b in bu_groups if l == brand_name), [])
@@ -1811,7 +1838,7 @@ def _render_dashboard():
             lambda b: format_monitor_num(resolve_unregistered_total(b))
         )
     if "상품 미등록(온라인)" in monitor_df.columns:
-        unregistered_counts = {b: BM[b].get("unregistered_count") or 0 for b in BM}
+        unregistered_counts = {b: BM_monitor[b].get("unregistered_count") or 0 for b in BM_monitor}
         def format_dash_if_no_register(brand_name, value):
             if not has_online_register_data(brand_name):
                 return "-"
@@ -1851,8 +1878,8 @@ def _render_dashboard():
         )
     if "평균 등록 소요일수" in monitor_df.columns:
         avg_days_by_brand = {}
-        for b in BM:
-            v = BM[b].get("register_days") if BM[b].get("register_days") is not None else BM[b].get("register_avg_days")
+        for b in BM_monitor:
+            v = BM_monitor[b].get("register_days") if BM_monitor[b].get("register_days") is not None else BM_monitor[b].get("register_avg_days")
             if v is not None:
                 avg_days_by_brand[b] = v
         def resolve_avg_days(brand_name):
