@@ -440,13 +440,27 @@ def _norm_season_value(val):
     return s[0]
 
 def _season_filter_mask(series, selected_seasons):
-    """데이터 시리즈에서 selected_seasons에 포함되는 행만 True. selected_seasons 비어있으면 전부 True.
-    비교 시 데이터와 selected_seasons 모두 _norm_season_value로 정규화하여 일치시킴 (예: '2'와 'G2' 동일 취급)."""
+    """위에서 선택한 시즌과 시트의 시즌 열 값이 동일한 행만 True.
+    데이터·선택값 모두 _norm_season_value로 정규화 후 비교 (예: 필터 2 ↔ 시트 G2/2, 필터 A ↔ 시트 gA/A)."""
     if not selected_seasons:
         return pd.Series(True, index=series.index)
     norm = series.astype(str).map(_norm_season_value)
     norm_selected = [_norm_season_value(s) for s in selected_seasons]
     return norm.isin(norm_selected)
+
+
+def _season_strict_match_mask(series, selected_seasons):
+    """선택 시즌과 시즌 열 값이 동일한 것만 허용: 시트 값이 '2', 'G2', 'A', 'gA' 등 형태만.
+    연도(2024), '12' 등은 제외. selected_seasons 정규화 후 한 글자 S에 대해 ^G?S$ 패턴으로 매칭."""
+    if not selected_seasons:
+        return pd.Series(True, index=series.index)
+    norm_selected = [_norm_season_value(s) for s in selected_seasons]
+    raw = series.astype(str).str.strip().str.upper()
+    mask = pd.Series(False, index=series.index)
+    for s in norm_selected:
+        if s:
+            mask = mask | raw.str.match(f"^G?{s}$", na=False)
+    return mask
 
 @st.cache_data
 def load_brand_metric_days(target_keywords, io_bytes=None, _cache_key=None, _cache_suffix="metric"):
@@ -586,27 +600,14 @@ def load_brand_registered_style_count(io_bytes=None, _cache_key=None, _cache_suf
 
         data = df_raw.iloc[header_row_idx + 1 :].copy()
 
-        # 시즌 필터
+        # 시즌 필터: 위에서 선택한 시즌과 각 브랜드 시트의 시즌 열 값이 동일한 스타일코드만 사용
+        # (예: 필터 2 → 시즌 열 값이 2 또는 G2인 행만, 필터 A → 시즌 열 값이 A 또는 gA인 행만)
         if selected_seasons and season_col is not None and season_col < data.shape[1]:
             norm_selected = [_norm_season_value(s) for s in selected_seasons]
-            # SP + 시즌 2: "시즌" 헤더 열이 여러 개이거나 잘못된 열이 잡혀 483 나오는 경우, G2가 실제로 있는 열 선택
-            if style_prefix and style_prefix.upper() == "SP" and norm_selected == ["2"]:
-                candidate_cols = [i for i, v in enumerate(header_vals) if i < data.shape[1] and ("시즌" in v or (v and v.strip().lower() == "season"))]
-                if candidate_cols:
-                    best_col, best_count = None, None
-                    for c in candidate_cols:
-                        raw = data.iloc[:, c].astype(str).str.strip().str.upper()
-                        g2_mask = raw.str.match(r"^G?2$", na=False)
-                        cnt = int(g2_mask.sum())
-                        if 1 <= cnt <= 500 and (best_count is None or cnt < best_count):
-                            best_col, best_count = c, cnt
-                    if best_col is not None:
-                        season_col = best_col
-            mask = _season_filter_mask(data.iloc[:, season_col], norm_selected)
-            # SP + 시즌 2: G2/g2/2만 허용 (연도·기타 2 포함 값 제외)
-            if style_prefix and style_prefix.upper() == "SP" and norm_selected == ["2"]:
-                season_raw = data.iloc[:, season_col].astype(str).str.strip().str.upper()
-                mask = mask & season_raw.str.match(r"^G?2$", na=False)
+            season_series = data.iloc[:, season_col]
+            mask = _season_filter_mask(season_series, selected_seasons)
+            # 시트 값이 '2','G2','A','gA' 등만 허용 (연도 2024, '12' 등 제외)
+            mask = mask & _season_strict_match_mask(season_series, selected_seasons)
             # 디버그: 필터 적용 후 남는 행 수 확인
             try:
                 print(f"[등록스타일수] 시트={sheet_name!r} 총 {len(data)}행 중 시즌 필터 적용 후 {mask.sum()}행 남음, norm_selected={norm_selected}")
@@ -639,6 +640,120 @@ def load_brand_registered_style_count(io_bytes=None, _cache_key=None, _cache_suf
         unique_styles = style_series.loc[reg_ok & style_ok].unique()
         return int(len(unique_styles))
     return 0
+
+
+def get_spao_registered_style_diagnostic(io_bytes, selected_seasons, style_prefix="SP"):
+    """
+    스파오 온라인등록 스타일수가 어떻게 산출되는지 단계별 로직을 반환.
+    반환: {"steps": [{"단계": str, "내용": str, "값": str}], "final_count": int, "error": str or None}
+    """
+    from io import BytesIO
+    result = {"steps": [], "final_count": None, "error": None}
+    b = _bytes(io_bytes)
+    if b is None:
+        result["error"] = "스파오 시트 데이터 없음"
+        return result
+    try:
+        excel_file = pd.ExcelFile(BytesIO(b))
+    except Exception as e:
+        result["error"] = f"엑셀 로드 실패: {e}"
+        return result
+
+    def normalize(v):
+        return "".join(str(v).split()) if v is not None else ""
+
+    for sheet_name in excel_file.sheet_names:
+        try:
+            df_raw = pd.read_excel(BytesIO(b), sheet_name=sheet_name, header=None)
+        except Exception:
+            continue
+        if df_raw is None or df_raw.empty:
+            continue
+        header_row_idx, header_vals = None, None
+        for i in range(min(30, len(df_raw))):
+            row = df_raw.iloc[i].tolist()
+            norm = [normalize(v) for v in row]
+            if any("스타일코드" in v for v in norm) and any("공홈등록일" in v for v in norm):
+                header_row_idx, header_vals = i, norm
+                break
+        if header_row_idx is None:
+            continue
+
+        def find_col(key):
+            for idx, v in enumerate(header_vals):
+                if key in v:
+                    return idx
+            return None
+
+        def find_col_exact(tgt):
+            for idx, v in enumerate(header_vals):
+                if v == tgt:
+                    return idx
+            return None
+
+        style_col = find_col("스타일코드") or find_col("스타일")
+        register_col = find_col("공홈등록일") or find_col("등록일")
+        register_status_col = find_col("공홈등록여부") or find_col("등록여부") or next((idx for idx, v in enumerate(header_vals) if "등록" in v and "여부" in v), None)
+        season_col = find_col_exact("시즌") or find_col("시즌")
+        if season_col is None and "시즌" in header_vals:
+            try:
+                season_col = header_vals.index("시즌")
+            except ValueError:
+                season_col = next((i for i, v in enumerate(header_vals) if v == "시즌"), None)
+        if season_col is None:
+            season_col = find_col("Season") or find_col("season")
+
+        if style_col is None or register_col is None:
+            continue
+        if selected_seasons and season_col is None:
+            continue
+
+        data = df_raw.iloc[header_row_idx + 1 :].copy()
+        total_rows = len(data)
+        result["steps"].append({"단계": "1. 사용 시트", "내용": f"시트명: {sheet_name!r}", "값": f"헤더 행: {header_row_idx + 1}"})
+        result["steps"].append({"단계": "2. 시즌 열", "내용": "시즌 컬럼 인식", "값": f"열 인덱스={season_col}" if season_col is not None else "없음(시트 스킵)"})
+
+        if selected_seasons and season_col is not None and season_col < data.shape[1]:
+            norm_selected = [_norm_season_value(s) for s in selected_seasons]
+            season_series = data.iloc[:, season_col]
+            mask = _season_filter_mask(season_series, selected_seasons) & _season_strict_match_mask(season_series, selected_seasons)
+            after_season = int(mask.sum())
+            result["steps"].append({"단계": "3. 시즌 필터", "내용": f"선택 시즌과 시즌 열 값 동일만 (2/G2, A/gA 등)", "값": f"총 {total_rows}행 → {after_season}행"})
+            data = data.loc[mask]
+        else:
+            after_season = total_rows
+            result["steps"].append({"단계": "3. 시즌 필터", "내용": "미적용", "값": f"{total_rows}행"})
+
+        reg_series = data.iloc[:, register_col]
+        reg_str = reg_series.astype(str).str.strip()
+        reg_numeric = pd.to_numeric(reg_series, errors="coerce")
+        reg_ok = reg_series.notna() & (reg_str != "") & ~reg_str.isin(["0", "0.0"]) & ((reg_numeric.isna()) | (reg_numeric != 0))
+        after_reg_date = int(reg_ok.sum())
+        result["steps"].append({"단계": "4. 공홈등록일", "내용": "값 있음(0/빈값 제외)", "값": f"{after_reg_date}행"})
+
+        if register_status_col is not None and register_status_col < data.shape[1]:
+            status_series = data.iloc[:, register_status_col].astype(str).str.strip()
+            reg_ok = reg_ok & (status_series.str.upper() == "등록")
+            after_status = int(reg_ok.sum())
+            result["steps"].append({"단계": "5. 공홈등록여부", "내용": "='등록'인 행만", "값": f"{after_status}행"})
+        else:
+            result["steps"].append({"단계": "5. 공홈등록여부", "내용": "컬럼 없음(전체 포함)", "값": f"{after_reg_date}행"})
+
+        style_series = data.iloc[:, style_col].astype(str).str.strip()
+        style_ok = (style_series != "") & style_series.notna()
+        if style_prefix:
+            style_ok = style_ok & style_series.str.upper().str.startswith(style_prefix.upper(), na=False)
+        after_style = int((reg_ok & style_ok).sum())
+        result["steps"].append({"단계": "6. 스타일코드", "내용": f"값 있음 + 접두어 {style_prefix or '전체'}", "값": f"{after_style}행"})
+
+        unique_styles = style_series.loc[reg_ok & style_ok].unique()
+        final_count = int(len(unique_styles))
+        result["steps"].append({"단계": "7. 유니크 스타일수", "내용": "중복 제거 후 개수", "값": f"{final_count}개"})
+        result["final_count"] = final_count
+        return result
+    result["error"] = "조건에 맞는 시트 없음"
+    return result
+
 
 @st.cache_data
 def load_brand_register_avg_days(io_bytes=None, _cache_key=None, inout_bytes=None, _inout_cache_key=None, _cache_suffix="avg_days", selected_seasons=None):
@@ -716,7 +831,8 @@ def load_brand_register_avg_days(io_bytes=None, _cache_key=None, inout_bytes=Non
     if selected_seasons and best_header_row is not None:
         season_col = find_season_col(df_raw, best_header_row)
         if season_col is not None and season_col < data.shape[1]:
-            mask = _season_filter_mask(data.iloc[:, season_col], selected_seasons)
+            season_series = data.iloc[:, season_col]
+            mask = _season_filter_mask(season_series, selected_seasons) & _season_strict_match_mask(season_series, selected_seasons)
             data = data.loc[mask]
     register_series = data.iloc[:, register_col]
     style_series = data.iloc[:, style_col]
@@ -815,7 +931,8 @@ def load_brand_unregistered_online_count(io_bytes=None, _cache_key=None, _cache_
         for col_idx in range(df_raw.shape[1]):
             if col_idx < len(df_raw.iloc[best_header_row]) and "시즌" in normalize_header_text(df_raw.iloc[best_header_row, col_idx]):
                 if col_idx < data.shape[1]:
-                    mask = _season_filter_mask(data.iloc[:, col_idx], selected_seasons)
+                    season_series = data.iloc[:, col_idx]
+                    mask = _season_filter_mask(season_series, selected_seasons) & _season_strict_match_mask(season_series, selected_seasons)
                     data = data.loc[mask]
                 break
     register_series = data.iloc[:, register_col]
@@ -1841,6 +1958,19 @@ def _render_dashboard():
     title_col, download_col = st.columns([8, 2])
     with title_col:
         st.markdown('<div class="section-title">브랜드별 상품등록 모니터링</div>', unsafe_allow_html=True)
+    # 스파오 온라인등록 스타일수 산출 로직 디버그 (483 vs 139 원인 확인용)
+    with st.expander("🔍 스파오 온라인등록 스타일수 산출 로직 (디버그)", expanded=False):
+        _spao_src = _sources.get("spao", (None, None))
+        _spao_bytes = _spao_src[0] if _spao_src else None
+        _sel = tuple(sorted(selected_seasons)) if selected_seasons else ()
+        diag = get_spao_registered_style_diagnostic(_spao_bytes, _sel, style_prefix="SP")
+        if diag.get("error"):
+            st.warning(f"오류: {diag['error']}")
+        else:
+            st.caption(f"**현재 선택 시즌:** {list(_sel) or '전체'}")
+            st.caption(f"**최종 산출값:** {diag.get('final_count')}개")
+            for s in diag.get("steps", []):
+                st.text(f"{s['단계']} — {s['내용']} → {s['값']}")
     monitor_columns = [
         "브랜드",
         "스타일수(입고상품 기준)",
