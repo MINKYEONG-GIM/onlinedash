@@ -560,6 +560,49 @@ DARK_CSS = """
     .monitor-table .rate-help:hover::after { content: attr(data-tooltip); opacity: 1; }
     .monitor-table .avg-help:hover::after { content: attr(data-tooltip); opacity: 1; }
     .monitor-table .sum-help:hover::after { content: attr(data-tooltip); opacity: 1; }
+    .monitor-table .rate-cell, .monitor-table .avg-cell {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        justify-content: center;
+        position: relative;
+        cursor: help;
+    }
+    .monitor-table .rate-dot {
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        display: inline-block;
+    }
+    .monitor-table .rate-red { background: #ef4444; }
+    .monitor-table .rate-yellow { background: #f59e0b; }
+    .monitor-table .rate-green { background: #22c55e; }
+    .monitor-table .rate-cell::after, .monitor-table .avg-cell::after {
+        content: "";
+        position: absolute;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.15s ease-in-out;
+        left: 50%;
+        transform: translateX(-50%);
+        bottom: calc(100% + 6px);
+        white-space: pre;
+        word-break: keep-all;
+        width: max-content;
+        max-width: 280px;
+        background: #111827;
+        color: #f1f5f9;
+        padding: 6px 8px;
+        border-radius: 6px;
+        font-size: 0.85rem;
+        text-align: left;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.35);
+        z-index: 20;
+    }
+    .monitor-table .rate-cell:hover::after, .monitor-table .avg-cell:hover::after {
+        content: attr(data-tooltip);
+        opacity: 1;
+    }
     .inout-table {
         width: 100%;
         border-collapse: collapse;
@@ -731,6 +774,45 @@ monitor_df["_미등록"] = monitor_df["전체 미등록스타일"].astype(int)
 def safe_cell(v):
     s = html_lib.escape(str(v)) if v is not None and str(v) != "nan" else ""
     return s
+
+def build_rate_cell(rate_val, rate_text):
+    """등록율 셀: 빨/노/초 동그라미 + 호버 시 툴팁"""
+    rate_str = safe_cell(rate_text) if rate_text not in (None, "") else "&nbsp;"
+    if rate_val is None or pd.isna(rate_val):
+        return rate_str
+    try:
+        v = float(rate_val)
+        if v <= 0.8:
+            dot_class = "rate-red"
+        elif v <= 0.9:
+            dot_class = "rate-yellow"
+        else:
+            dot_class = "rate-green"
+    except Exception:
+        return rate_str
+    tooltip = "(초록불) 90% 초과&#10;(노란불) 80% 초과&#10;(빨간불) 80% 이하"
+    return f"<span class='rate-cell' data-tooltip='{tooltip}'><span class='rate-dot {dot_class}'></span>{rate_str}</span>"
+
+def build_avg_days_cell(value_text):
+    """평균 등록 소요일수 셀: 빨/노/초 동그라미 + 호버 시 툴팁"""
+    tooltip = "(초록불) 3일 이하&#10;(노란불) 5일 이하&#10;(빨간불) 5일 초과"
+    dot_class = ""
+    try:
+        raw = str(value_text).replace(",", "").strip()
+        if raw in ("", "-", "nan"):
+            return f"<span class='avg-cell' data-tooltip='{tooltip}'>{safe_cell(value_text)}</span>"
+        num_val = float(raw)
+        if num_val <= 3:
+            dot_class = "rate-green"
+        elif num_val <= 5:
+            dot_class = "rate-yellow"
+        else:
+            dot_class = "rate-red"
+    except Exception:
+        return f"<span class='avg-cell' data-tooltip='{tooltip}'>{safe_cell(value_text)}</span>"
+    dot_html = f"<span class='rate-dot {dot_class}'></span>"
+    return f"<span class='avg-cell' data-tooltip='{tooltip}'>{dot_html}{safe_cell(value_text)}</span>"
+
 rate_tip = "(초록불) 90% 초과&#10;(노란불) 80% 초과&#10;(빨간불) 80% 이하"
 avg_tip = "온라인상품등록일 - 최초입고일"
 sum_tip = "입고스타일수 - 온라인등록스타일수"
@@ -749,9 +831,22 @@ header_monitor = (
 )
 def _fmt(n):
     return f"{int(n):,}"
+def _row_monitor(r):
+    rate_cell = build_rate_cell(r.get("온라인등록율"), r.get("_등록율"))
+    avg_cell = build_avg_days_cell(r.get("평균 등록 소요일수"))
+    return (
+        f"<td>{safe_cell(r['브랜드'])}</td>"
+        f"<td>{safe_cell(_fmt(r['입고스타일수']))}</td>"
+        f"<td>{safe_cell(_fmt(r['온라인등록스타일수']))}</td>"
+        f"<td>{rate_cell}</td>"
+        f"<td>{avg_cell}</td>"
+        f"<td>{safe_cell(_fmt(r['등록수']))}</td>"
+        f"<td>{rate_cell}</td>"
+        f"<td>{safe_cell(_fmt(r['_미등록']))}</td>"
+        f"<td>{safe_cell(r['미분배(분배팀)'])}</td>"
+    )
 body_monitor = "".join(
-    ("<tr class='bu-row'>" if r["브랜드"] in bu_labels else "<tr>")
-    + f"<td>{safe_cell(r['브랜드'])}</td><td>{safe_cell(_fmt(r['입고스타일수']))}</td><td>{safe_cell(_fmt(r['온라인등록스타일수']))}</td><td>{safe_cell(r['_등록율'])}</td><td>{safe_cell(r['평균 등록 소요일수'])}</td><td>{safe_cell(_fmt(r['등록수']))}</td><td>{safe_cell(r['_등록율'])}</td><td>{safe_cell(_fmt(r['_미등록']))}</td><td>{safe_cell(r['미분배(분배팀)'])}</td></tr>"
+    ("<tr class='bu-row'>" if r["브랜드"] in bu_labels else "<tr>") + _row_monitor(r) + "</tr>"
     for _, r in monitor_df.iterrows()
 )
 st.markdown(f"""
