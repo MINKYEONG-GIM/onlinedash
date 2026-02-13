@@ -6,3 +6,4 @@ plotly>=5.18.0
 gspread
 google-api-python-client>=2.100.0
 google-auth>=2.22.0
+streamlit-aggrid
