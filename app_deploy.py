@@ -458,7 +458,6 @@ def load_brand_metric_days(target_keywords, io_bytes=None, _cache_key=None, _cac
     return float(values.mean()), int(values.count()), header_cell
 
 @st.cache_data
-@st.cache_data
 def load_brand_registered_style_count(io_bytes=None, _cache_key=None, _cache_suffix="reg_count", style_prefix=None):
     """트래킹판에서 스타일코드+공홈등록일 모두 있는 행의 유니크 스타일 수. style_prefix 있으면 해당 접두어만."""
     if _cache_key is None:
@@ -702,83 +701,69 @@ def load_brand_unregistered_online_count(io_bytes=None, _cache_key=None, _cache_
 # - 아래는 각 브랜드 엑셀에서 필요한 지표를 "로더 함수 호출"로 뽑아내는 구간입니다.
 # - 값들은 이후 UI 섹션에서 테이블/지표 표시에 사용됩니다.
 # =====================================================
-# 브랜드 메트릭 설정: source_key, handover_keywords, shooting_keywords, register_keywords, style_prefix
+# 브랜드 메트릭 설정: src, handover/shooting/register 키워드, style_prefix, vname(변수접두어), shoot_suffix(photo|shooting), 선택 overrides
+_COMMON_HANDOVER = ["포토팀상품인계", "포토팀 상품인계", "상품인계소요일", "상품인계 소요일", "포토인계소요일", "포토 인계 소요일"]
+_COMMON_SHOOTING = ["촬영소요일", "촬영 소요일", "촬영기간"]
+_COMMON_REGISTER = ["상품등록소요일", "상품등록 소요일", "공홈등록소요일", "공홈등록 소요일", "등록소요일", "등록 소요일"]
 BRAND_METRICS_CFG = {
-    "스파오": {"src": "spao", "handover": [], "shooting": ["포토소요일"], "register": ["공홈등록소요일"], "style_prefix": None},
-    "후아유": {"src": "whoau", "handover": ["포토팀상품인계", "포토팀 상품인계", "상품인계소요일", "상품인계 소요일", "포토인계소요일", "포토 인계 소요일"], "shooting": ["촬영소요일", "촬영 소요일", "촬영기간"], "register": ["상품등록소요일", "상품등록 소요일", "공홈등록소요일", "공홈등록 소요일", "등록소요일", "등록 소요일"], "style_prefix": "WH"},
-    "클라비스": {"src": "clavis", "handover": ["포토팀상품인계", "포토팀 상품인계", "상품인계소요일", "상품인계 소요일", "포토인계소요일", "포토 인계 소요일"], "shooting": ["촬영소요일", "촬영 소요일", "촬영기간"], "register": ["상품등록소요일", "상품등록 소요일", "공홈등록소요일", "공홈등록 소요일", "등록소요일", "등록 소요일"], "style_prefix": "CV"},
-    "미쏘": {"src": "mixxo", "handover": ["포토팀상품인계", "포토팀 상품인계", "상품인계소요일", "상품인계 소요일", "포토인계소요일", "포토 인계 소요일"], "shooting": ["촬영소요일", "촬영 소요일", "촬영기간"], "register": ["상품등록소요일", "상품등록 소요일", "공홈등록소요일", "공홈등록 소요일", "등록소요일", "등록 소요일"], "style_prefix": "MI"},
-    "로엠": {"src": "roem", "handover": ["포토팀상품인계", "포토팀 상품인계", "상품인계소요일", "상품인계 소요일", "포토인계소요일", "포토 인계 소요일"], "shooting": ["촬영소요일", "촬영 소요일", "촬영기간"], "register": ["상품등록소요일", "상품등록 소요일", "공홈등록소요일", "공홈등록 소요일", "등록소요일", "등록 소요일"], "style_prefix": "RM"},
-    "슈펜": {"src": "shoopen", "handover": ["포토팀상품인계", "포토팀 상품인계", "상품인계소요일", "상품인계 소요일", "포토인계소요일", "포토 인계 소요일"], "shooting": ["촬영소요일", "촬영 소요일", "촬영기간"], "register": ["상품등록소요일", "상품등록 소요일", "공홈등록소요일", "공홈등록 소요일", "등록소요일", "등록 소요일"], "style_prefix": "HP"},
+    "스파오": {"src": "spao", "handover": [], "shooting": ["포토소요일"], "register": ["공홈등록소요일"], "style_prefix": None, "vname": "spao", "shoot_suffix": "photo"},
+    "후아유": {"src": "whoau", "handover": _COMMON_HANDOVER, "shooting": _COMMON_SHOOTING, "register": _COMMON_REGISTER, "style_prefix": "WH", "vname": "whoau", "shoot_suffix": "shooting"},
+    "클라비스": {"src": "clavis", "handover": _COMMON_HANDOVER, "shooting": _COMMON_SHOOTING, "register": _COMMON_REGISTER, "style_prefix": "CV", "vname": "clavis", "shoot_suffix": "shooting", "override_register_style_count": 103, "override_register_avg_days": 1.3, "hide_undist": True},
+    "미쏘": {"src": "mixxo", "handover": _COMMON_HANDOVER, "shooting": _COMMON_SHOOTING, "register": _COMMON_REGISTER, "style_prefix": "MI", "vname": "mixxo", "shoot_suffix": "shooting", "override_register_style_count": 392, "override_register_avg_days": 4.1, "hide_undist": True},
+    "로엠": {"src": "roem", "handover": _COMMON_HANDOVER, "shooting": _COMMON_SHOOTING, "register": _COMMON_REGISTER, "style_prefix": "RM", "vname": "roem", "shoot_suffix": "shooting", "override_register_avg_days": 3.89, "hide_undist": True},
+    "슈펜": {"src": "shoopen", "handover": _COMMON_HANDOVER, "shooting": _COMMON_SHOOTING, "register": _COMMON_REGISTER, "style_prefix": "HP", "vname": "hp", "shoot_suffix": "shooting", "override_register_avg_days": 12, "hide_undist": True},
+    "에블린": {"src": "eblin", "handover": [], "shooting": [], "register": [], "style_prefix": None, "vname": "eblin", "shoot_suffix": "shooting", "override_register_style_count": 136, "override_register_avg_days": 1, "hide_undist": True},
 }
+UNDIST_HIDE_BRANDS = {b for b, cfg in BRAND_METRICS_CFG.items() if cfg.get("hide_undist")}
 
 def _load_brand_metrics():
-    """브랜드별 메트릭 로드 (handover_days, shooting_days, register_days, register_style_count, register_avg_days, unregistered_count)"""
+    """브랜드별 메트릭 로드. 설정만 사용, 브랜드명 분기 없음."""
     _inout = _sources.get("inout", (None, None))
     result = {}
     for brand_name, cfg in BRAND_METRICS_CFG.items():
         src = _sources.get(cfg["src"], (None, None))
         io, ck = src[0], src[1]
         suffix = cfg["src"]
-        r = {}
-        # 스파오: register=공홈등록소요일, shooting=포토소요일
-        if brand_name == "스파오":
-            reg = load_brand_metric_days(["공홈등록소요일"], io, _cache_key=ck, _cache_suffix=f"{suffix}_reg")
-            photo = load_brand_metric_days(["포토소요일"], io, _cache_key=ck, _cache_suffix=f"{suffix}_photo")
-            r["register_days"], r["register_count"], r["register_header_cell"] = (reg[0], reg[1], reg[2]) if reg else (None, 0, None)
-            r["shooting_days"], r["shooting_count"], r["shooting_header_cell"] = (photo[0], photo[1], photo[2]) if photo else (None, 0, None)
-            r["handover_days"], r["handover_count"], r["handover_header_cell"] = None, 0, None
-        else:
-            h = load_brand_metric_days(cfg["handover"], io, _cache_key=ck, _cache_suffix=f"{suffix}_handover")
-            s = load_brand_metric_days(cfg["shooting"], io, _cache_key=ck, _cache_suffix=f"{suffix}_shooting")
-            reg = load_brand_metric_days(cfg["register"], io, _cache_key=ck, _cache_suffix=f"{suffix}_register")
-            r["handover_days"], r["handover_count"], r["handover_header_cell"] = (h[0], h[1], h[2]) if h else (None, 0, None)
-            r["shooting_days"], r["shooting_count"], r["shooting_header_cell"] = (s[0], s[1], s[2]) if s else (None, 0, None)
-            r["register_days"], r["register_count"], r["register_header_cell"] = (reg[0], reg[1], reg[2]) if reg else (None, 0, None)
-        r["register_style_count"] = load_brand_registered_style_count(io, _cache_key=ck, _cache_suffix=f"{suffix}_reg_count", style_prefix=cfg["style_prefix"])
-        r["register_avg_days"] = load_brand_register_avg_days(io, _cache_key=ck, inout_bytes=_inout[0], _inout_cache_key=_inout[1], _cache_suffix=f"{suffix}_avg")
-        r["unregistered_count"] = load_brand_unregistered_online_count(io, _cache_key=ck, _cache_suffix=f"{suffix}_unreg", style_prefix=cfg["style_prefix"])
+        h = load_brand_metric_days(cfg["handover"], io, _cache_key=ck, _cache_suffix=f"{suffix}_handover") if cfg["handover"] else None
+        s = load_brand_metric_days(cfg["shooting"], io, _cache_key=ck, _cache_suffix=f"{suffix}_shooting") if cfg["shooting"] else None
+        reg = load_brand_metric_days(cfg["register"], io, _cache_key=ck, _cache_suffix=f"{suffix}_register") if cfg["register"] else None
+        r = {
+            "handover_days": h[0] if h else None, "handover_count": (h[1] or 0) if h else 0, "handover_header_cell": h[2] if h else None,
+            "shooting_days": s[0] if s else None, "shooting_count": (s[1] or 0) if s else 0, "shooting_header_cell": s[2] if s else None,
+            "register_days": reg[0] if reg else None, "register_count": (reg[1] or 0) if reg else 0, "register_header_cell": reg[2] if reg else None,
+        }
+        r["register_style_count"] = load_brand_registered_style_count(io, _cache_key=ck, _cache_suffix=f"{suffix}_reg_count", style_prefix=cfg["style_prefix"]) if io else 0
+        r["register_avg_days"] = load_brand_register_avg_days(io, _cache_key=ck, inout_bytes=_inout[0], _inout_cache_key=_inout[1], _cache_suffix=f"{suffix}_avg") if io else None
+        r["unregistered_count"] = (load_brand_unregistered_online_count(io, _cache_key=ck, _cache_suffix=f"{suffix}_unreg", style_prefix=cfg["style_prefix"]) or 0) if io else 0
+        for k in ("override_register_style_count", "override_register_avg_days"):
+            if k in cfg and cfg[k] is not None:
+                r[k.replace("override_", "")] = cfg[k]
         result[brand_name] = r
     return result
 
 BM = _load_brand_metrics()
 
 def _assign_brand_vars():
-    """BM에서 UI 변수 추출 (하위호환)"""
-    def m(brand, key, default=None):
-        return BM.get(brand, {}).get(key, default)
+    """BM + 설정에서 UI용 전역 변수 생성 (설정 기반, 브랜드 분기 없음)."""
     g = globals()
-    # spao는 shooting → photo 변수명 사용, 나머지는 shooting
-    for brand, vname in [("스파오","spao"), ("후아유","whoau"), ("클라비스","clavis"), ("미쏘","mixxo"), ("로엠","roem"), ("슈펜","hp")]:
-        shoot_suffix = "photo" if vname == "spao" else "shooting"
-        h = m(brand, "handover_days"), m(brand, "handover_count"), m(brand, "handover_header_cell")
-        s = m(brand, "shooting_days"), m(brand, "shooting_count"), m(brand, "shooting_header_cell")
-        r = m(brand, "register_days"), m(brand, "register_count"), m(brand, "register_header_cell")
-        rs, ra = m(brand, "register_style_count"), m(brand, "register_avg_days")
-        u = m(brand, "unregistered_count") or 0
+    for brand_name, cfg in BRAND_METRICS_CFG.items():
+        m = BM.get(brand_name, {})
+        vname = cfg["vname"]
+        suf = cfg["shoot_suffix"]
         g.update({
-            f"{vname}_handover_days": h[0], f"{vname}_handover_count": h[1] or 0, f"{vname}_handover_header_cell": h[2],
-            f"{vname}_{shoot_suffix}_days": s[0], f"{vname}_{shoot_suffix}_count": s[1] or 0, f"{vname}_{shoot_suffix}_header_cell": s[2],
-            f"{vname}_register_days": r[0], f"{vname}_register_count": r[1] or 0, f"{vname}_register_header_cell": r[2],
-            f"{vname}_register_style_count": rs, f"{vname}_register_avg_days": ra, f"{vname}_unregistered_online_count": u,
+            f"{vname}_handover_days": m.get("handover_days"), f"{vname}_handover_count": m.get("handover_count") or 0, f"{vname}_handover_header_cell": m.get("handover_header_cell"),
+            f"{vname}_{suf}_days": m.get("shooting_days"), f"{vname}_{suf}_count": m.get("shooting_count") or 0, f"{vname}_{suf}_header_cell": m.get("shooting_header_cell"),
+            f"{vname}_register_days": m.get("register_days"), f"{vname}_register_count": m.get("register_count") or 0, f"{vname}_register_header_cell": m.get("register_header_cell"),
+            f"{vname}_register_style_count": m.get("register_style_count"), f"{vname}_register_avg_days": m.get("register_avg_days"), f"{vname}_unregistered_online_count": m.get("unregistered_count") or 0,
         })
-    # 고정 오버라이드
-    g["clavis_register_style_count"], g["clavis_register_avg_days"] = 103, 1.3
-    g["mixxo_register_style_count"] = 392
-    if g.get("mixxo_register_avg_days") is None:
-        g["mixxo_register_avg_days"] = 4.1
-    if g.get("roem_register_avg_days") is None:
-        g["roem_register_avg_days"] = 3.89
-    g["hp_register_avg_days"], g["eblin_register_style_count"], g["eblin_register_avg_days"] = 12, 136, 1
-
 _assign_brand_vars()
 
 
 @st.cache_data
-def load_whoau_photo_missing_count(inbound_styles_tuple=None, io_bytes=None, _cache_key=None):
-    """후아유: 입고 스타일 중 리터칭완료일이 비어있는 스타일 수"""
+def load_photo_missing_count(inbound_styles_tuple=None, io_bytes=None, _cache_key=None, style_prefix=None):
+    """입고 스타일 중 리터칭완료일이 비어있는 스타일 수. style_prefix 또는 inbound_styles_tuple로 대상 필터."""
     if _cache_key is None:
-        _cache_key = "whoau_photo_missing_default"
+        _cache_key = "photo_missing_default"
     b = _bytes(io_bytes)
     if b is None:
         return 0
@@ -864,8 +849,13 @@ def load_whoau_photo_missing_count(inbound_styles_tuple=None, io_bytes=None, _ca
 
     style_text = style_series.astype(str).str.strip()
     style_ok = style_text.replace(r"^\s*$", pd.NA, regex=True).notna()
-    inbound_set = set(inbound_styles_tuple) if inbound_styles_tuple else set()
-    inbound_mask = style_text.isin(inbound_set) if inbound_set else style_text.str.upper().str.startswith("WH", na=False)
+    inbound_set = set(inbound_styles_tuple) if inbound_styles_tuple else None
+    if inbound_set:
+        inbound_mask = style_text.isin(inbound_set)
+    elif style_prefix:
+        inbound_mask = style_text.str.upper().str.startswith(str(style_prefix).upper(), na=False)
+    else:
+        inbound_mask = style_ok
     retouch_dt = clean_date_series(retouch_series)
     missing_retouch = retouch_dt.isna()
     return int((style_ok & inbound_mask & missing_retouch).sum())
@@ -1135,10 +1125,14 @@ def count_unique_sku_with_amount(df, style_col_name, color_col_name, amount_col_
 days_photo_handover = 1.0
 days_shooting = 10.0
 days_product_register = 0.0
-if spao_photo_days is not None:
-    days_shooting = round(spao_photo_days, 1)
-if spao_register_days is not None:
-    days_product_register = round(spao_register_days, 1)
+for _b in BM:
+    if BM[_b].get("shooting_days") is not None:
+        days_shooting = round(BM[_b]["shooting_days"], 1)
+        break
+for _b in BM:
+    if BM[_b].get("register_days") is not None:
+        days_product_register = round(BM[_b]["register_days"], 1)
+        break
 
 # =====================================================
 # (D) KPI 초기값(집계 결과를 담을 변수들)
@@ -1168,8 +1162,8 @@ bu_groups = [
 # - Streamlit 내부 DOM 구조에 의존하므로, Streamlit 버전 변경 시 깨질 수 있습니다.
 # =====================================================
 _missing = _missing_sheet_ids()
-if any("에블린" in m for m in _missing):
-    st.warning("에블린 시트 연결 안 됨: **Secrets**에 `EB_SPREADSHEET_ID`를 추가하고, 에블린 Google 시트 URL의 ID를 넣으세요. 시트는 서비스 계정 이메일과 **편집자**로 공유해야 합니다.")
+if _missing:
+    st.warning("다음 시트 연결이 안 됨: **" + ", ".join(_missing) + "**. **Secrets**에 해당 SPREADSHEET_ID를 추가하고, Google 시트 URL의 ID를 넣으세요. 시트는 서비스 계정 이메일과 **편집자**로 공유해야 합니다.")
 
 st.markdown(r"""
 <style>
@@ -1428,7 +1422,7 @@ def _render_dashboard():
                 seasons = ["1", "2", "A", "S", "F"]
                 selected_seasons = st.multiselect("시즌", seasons, default=seasons, key="season_filter")
         with col_brand_col:
-            brand_options = ["브랜드 전체", "스파오", "미쏘", "후아유", "로엠", "뉴발란스", "뉴발란스 키즈", "에블린", "클라비스", "슈펜"]
+            brand_options = ["브랜드 전체"] + brands_list
             selected_brand = st.selectbox("브랜드", brand_options, key="brand_filter", index=0)
         with col_qr_col:
             qr_toggle_val = st.session_state.get("qr_toggle", True)
@@ -1481,21 +1475,6 @@ def _render_dashboard():
         in_brand_series = df_inout_in_filtered[inout_brand_col].astype(str).str.replace(" ", "").str.strip()
         in_target_brand = selected_brand.replace(" ", "").strip()
         df_inout_in_filtered = df_inout_in_filtered[in_brand_series == in_target_brand]
-    
-    # 후아유 입고 스타일 세트(포토 미업로드 계산 기준)
-    whoau_inbound_styles = set()
-    if df_inout_in_base is not None and not df_inout_in_base.empty and inout_style_col:
-        base_df = df_inout_in_base.copy()
-        if inout_brand_col and inout_brand_col in base_df.columns:
-            brand_series = base_df[inout_brand_col].astype(str).str.replace(" ", "").str.strip()
-            base_df = base_df[brand_series == "후아유"]
-        else:
-            style_series = base_df[inout_style_col].astype(str).str.strip()
-            base_df = base_df[style_series.str.upper().str.startswith("WH", na=False)]
-        if inout_style_col in base_df.columns:
-            style_series = base_df[inout_style_col].astype(str).str.strip()
-            style_series = style_series.replace(r"^\s*$", pd.NA, regex=True).dropna()
-            whoau_inbound_styles = set(style_series.tolist())
     
     # 입고 스타일수(브랜드별) - 위 입출고 표와 아래 모니터 표가 동일한 수치를 쓰도록 한 번만 계산
     # 시즌 상세/KPI와 동일: 입고액(또는 누적입고액)이 1 이상인 스타일만 카운트 → 574 등
@@ -1617,61 +1596,17 @@ def _render_dashboard():
     
     # --- 온라인 판매 프로세스 소요일 비교 그래프 섹션 ---
     
-    # 1. 선택 브랜드별 소요일 표시(스파오는 실제 값 반영)
+    # 1. 선택 브랜드별 소요일 표시 (BM 설정 기반)
     display_days = [days_photo_handover, days_shooting, days_product_register]
-    if selected_brand == "스파오":
-        if spao_photo_days is not None:
-            display_days[1] = round(spao_photo_days, 1)
-        if spao_register_days is not None:
-            display_days[2] = round(spao_register_days, 1)
-    if selected_brand == "후아유":
-        if whoau_handover_days is not None:
-            display_days[0] = round(whoau_handover_days, 1)
-        if whoau_shooting_days is not None:
-            display_days[1] = round(whoau_shooting_days, 1)
-        if whoau_register_avg_days is not None:
-            display_days[2] = round(whoau_register_avg_days, 1)
-        elif whoau_register_days is not None:
-            display_days[2] = round(whoau_register_days, 1)
-    if selected_brand == "클라비스":
-        if clavis_handover_days is not None:
-            display_days[0] = round(clavis_handover_days, 1)
-        if clavis_shooting_days is not None:
-            display_days[1] = round(clavis_shooting_days, 1)
-        if clavis_register_avg_days is not None:
-            display_days[2] = round(clavis_register_avg_days, 1)
-        else:
-            display_days[2] = 1.3
-    if selected_brand == "미쏘":
-        if mixxo_handover_days is not None:
-            display_days[0] = round(mixxo_handover_days, 1)
-        if mixxo_shooting_days is not None:
-            display_days[1] = round(mixxo_shooting_days, 1)
-        if mixxo_register_avg_days is not None:
-            display_days[2] = round(mixxo_register_avg_days, 1)
-        elif mixxo_register_days is not None:
-            display_days[2] = round(mixxo_register_days, 1)
-    if selected_brand == "로엠":
-        if roem_handover_days is not None:
-            display_days[0] = round(roem_handover_days, 1)
-        if roem_shooting_days is not None:
-            display_days[1] = round(roem_shooting_days, 1)
-        if roem_register_avg_days is not None:
-            display_days[2] = round(roem_register_avg_days, 1)
-        elif roem_register_days is not None:
-            display_days[2] = round(roem_register_days, 1)
-    if selected_brand == "슈펜":
-        if hp_handover_days is not None:
-            display_days[0] = round(hp_handover_days, 1)
-        if hp_shooting_days is not None:
-            display_days[1] = round(hp_shooting_days, 1)
-        if hp_register_avg_days is not None:
-            display_days[2] = round(hp_register_avg_days, 1)
-        elif hp_register_days is not None:
-            display_days[2] = round(hp_register_days, 1)
-    if selected_brand == "에블린":
-        if eblin_register_avg_days is not None:
-            display_days[2] = round(eblin_register_avg_days, 1)
+    m_sel = BM.get(selected_brand, {})
+    if m_sel.get("handover_days") is not None:
+        display_days[0] = round(m_sel["handover_days"], 1)
+    if m_sel.get("shooting_days") is not None:
+        display_days[1] = round(m_sel["shooting_days"], 1)
+    if m_sel.get("register_days") is not None:
+        display_days[2] = round(m_sel["register_days"], 1)
+    elif m_sel.get("register_avg_days") is not None:
+        display_days[2] = round(m_sel["register_avg_days"], 1)
     
     st.markdown(
         f'<div class="section-title" style="font-size: 1.6rem;">{selected_brand} 단계별 리드타임</div>',
@@ -1704,91 +1639,14 @@ def _render_dashboard():
         ''',
         unsafe_allow_html=True,
     )
-    if selected_brand == "스파오" and (spao_register_header_cell or spao_photo_header_cell):
-        st.caption(
-            f"공홈등록 소요일 위치: {spao_register_header_cell} · "
-            f"숫자 {spao_register_count}개 평균"
-        )
-    if selected_brand == "스파오" and spao_photo_header_cell:
-        st.caption(
-            f"포토소요일 위치: {spao_photo_header_cell} · "
-            f"숫자 {spao_photo_count}개 평균"
-        )
-    if selected_brand == "후아유" and whoau_handover_header_cell:
-        st.caption(
-            f"포토팀 상품인계 위치: {whoau_handover_header_cell} · "
-            f"숫자 {whoau_handover_count}개 평균"
-        )
-    if selected_brand == "후아유" and whoau_shooting_header_cell:
-        st.caption(
-            f"촬영 소요일 위치: {whoau_shooting_header_cell} · "
-            f"숫자 {whoau_shooting_count}개 평균"
-        )
-    if selected_brand == "후아유" and whoau_register_header_cell:
-        st.caption(
-            f"상품등록 소요일 위치: {whoau_register_header_cell} · "
-            f"숫자 {whoau_register_count}개 평균"
-        )
-    if selected_brand == "클라비스" and clavis_handover_header_cell:
-        st.caption(
-            f"포토팀 상품인계 위치: {clavis_handover_header_cell} · "
-            f"숫자 {clavis_handover_count}개 평균"
-        )
-    if selected_brand == "클라비스" and clavis_shooting_header_cell:
-        st.caption(
-            f"촬영 소요일 위치: {clavis_shooting_header_cell} · "
-            f"숫자 {clavis_shooting_count}개 평균"
-        )
-    if selected_brand == "클라비스" and clavis_register_header_cell:
-        st.caption(
-            f"상품등록 소요일 위치: {clavis_register_header_cell} · "
-            f"숫자 {clavis_register_count}개 평균"
-        )
-    if selected_brand == "미쏘" and mixxo_handover_header_cell:
-        st.caption(
-            f"포토팀 상품인계 위치: {mixxo_handover_header_cell} · "
-            f"숫자 {mixxo_handover_count}개 평균"
-        )
-    if selected_brand == "미쏘" and mixxo_shooting_header_cell:
-        st.caption(
-            f"촬영 소요일 위치: {mixxo_shooting_header_cell} · "
-            f"숫자 {mixxo_shooting_count}개 평균"
-        )
-    if selected_brand == "미쏘" and mixxo_register_header_cell:
-        st.caption(
-            f"상품등록 소요일 위치: {mixxo_register_header_cell} · "
-            f"숫자 {mixxo_register_count}개 평균"
-        )
-    if selected_brand == "로엠" and roem_handover_header_cell:
-        st.caption(
-            f"포토팀 상품인계 위치: {roem_handover_header_cell} · "
-            f"숫자 {roem_handover_count}개 평균"
-        )
-    if selected_brand == "로엠" and roem_shooting_header_cell:
-        st.caption(
-            f"촬영 소요일 위치: {roem_shooting_header_cell} · "
-            f"숫자 {roem_shooting_count}개 평균"
-        )
-    if selected_brand == "로엠" and roem_register_header_cell:
-        st.caption(
-            f"상품등록 소요일 위치: {roem_register_header_cell} · "
-            f"숫자 {roem_register_count}개 평균"
-        )
-    if selected_brand == "슈펜" and hp_handover_header_cell:
-        st.caption(
-            f"포토팀 상품인계 위치: {hp_handover_header_cell} · "
-            f"숫자 {hp_handover_count}개 평균"
-        )
-    if selected_brand == "슈펜" and hp_shooting_header_cell:
-        st.caption(
-            f"촬영 소요일 위치: {hp_shooting_header_cell} · "
-            f"숫자 {hp_shooting_count}개 평균"
-        )
-    if selected_brand == "슈펜" and hp_register_header_cell:
-        st.caption(
-            f"상품등록 소요일 위치: {hp_register_header_cell} · "
-            f"숫자 {hp_register_count}개 평균"
-        )
+    for label, key_header, key_count in [
+        ("포토팀 상품인계", "handover_header_cell", "handover_count"),
+        ("촬영 소요일", "shooting_header_cell", "shooting_count"),
+        ("상품등록 소요일", "register_header_cell", "register_count"),
+    ]:
+        cell, cnt = m_sel.get(key_header), m_sel.get(key_count)
+        if cell and (cnt or 0) > 0:
+            st.caption(f"{label} 위치: {cell} · 숫자 {cnt}개 평균")
     
     # 브랜드별 상품등록 모니터링 (상단 표)
     st.markdown("<div style='margin-top: 120px;'></div>", unsafe_allow_html=True)
@@ -1883,27 +1741,12 @@ def _render_dashboard():
                 max(style_count_by_brand.get(b, 0) - out_style_count_by_brand.get(b, 0), 0)
             )
         )
-        undist_hide_brands = {"미쏘", "로엠", "클라비스", "에블린", "슈펜"}
         monitor_df.loc[
-            monitor_df["브랜드"].isin(undist_hide_brands),
+            monitor_df["브랜드"].isin(UNDIST_HIDE_BRANDS),
             "미분배(분배팀)",
         ] = "-"
     if "온라인 등록 스타일수" in monitor_df.columns:
-        register_style_counts = {}
-        if spao_register_style_count is not None:
-            register_style_counts["스파오"] = spao_register_style_count
-        if whoau_register_style_count is not None:
-            register_style_counts["후아유"] = whoau_register_style_count
-        if clavis_register_style_count is not None:
-            register_style_counts["클라비스"] = clavis_register_style_count
-        if mixxo_register_style_count is not None:
-            register_style_counts["미쏘"] = mixxo_register_style_count
-        if roem_register_style_count is not None:
-            register_style_counts["로엠"] = roem_register_style_count
-        if hp_register_style_count is not None:
-            register_style_counts["슈펜"] = hp_register_style_count
-        if eblin_register_style_count is not None:
-            register_style_counts["에블린"] = eblin_register_style_count
+        register_style_counts = {b: BM[b].get("register_style_count") for b in BM if BM[b].get("register_style_count") is not None}
         def has_online_register_data(brand_name):
             if brand_name in bu_labels:
                 brands = next((b for l, b in bu_groups if l == brand_name), [])
@@ -1934,14 +1777,7 @@ def _render_dashboard():
             lambda b: format_monitor_num(resolve_unregistered_total(b))
         )
     if "상품 미등록(온라인)" in monitor_df.columns:
-        unregistered_counts = {
-            "후아유": whoau_unregistered_online_count,
-            "스파오": spao_unregistered_online_count,
-            "클라비스": clavis_unregistered_online_count,
-            "미쏘": mixxo_unregistered_online_count,
-            "로엠": roem_unregistered_online_count,
-            "슈펜": hp_unregistered_online_count,
-        }
+        unregistered_counts = {b: BM[b].get("unregistered_count") or 0 for b in BM}
         def format_dash_if_no_register(brand_name, value):
             if not has_online_register_data(brand_name):
                 return "-"
@@ -1981,23 +1817,10 @@ def _render_dashboard():
         )
     if "평균 등록 소요일수" in monitor_df.columns:
         avg_days_by_brand = {}
-        # 스파오: 시트의 '공홈등록소요일' 컬럼 평균(5.1일) 사용. (등록일-스튜디오전표일자) 방식은 47일 등으로 크게 나올 수 있음.
-        if spao_register_days is not None:
-            avg_days_by_brand["스파오"] = spao_register_days
-        elif spao_register_avg_days is not None:
-            avg_days_by_brand["스파오"] = spao_register_avg_days
-        if whoau_register_avg_days is not None:
-            avg_days_by_brand["후아유"] = whoau_register_avg_days
-        if clavis_register_avg_days is not None:
-            avg_days_by_brand["클라비스"] = clavis_register_avg_days
-        if mixxo_register_avg_days is not None:
-            avg_days_by_brand["미쏘"] = mixxo_register_avg_days
-        if roem_register_avg_days is not None:
-            avg_days_by_brand["로엠"] = roem_register_avg_days
-        if hp_register_avg_days is not None:
-            avg_days_by_brand["슈펜"] = hp_register_avg_days
-        if eblin_register_avg_days is not None:
-            avg_days_by_brand["에블린"] = eblin_register_avg_days
+        for b in BM:
+            v = BM[b].get("register_days") if BM[b].get("register_days") is not None else BM[b].get("register_avg_days")
+            if v is not None:
+                avg_days_by_brand[b] = v
         def resolve_avg_days(brand_name):
             if brand_name in bu_labels:
                 brands = next((b for l, b in bu_groups if l == brand_name), [])
