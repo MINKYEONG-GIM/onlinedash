@@ -726,19 +726,20 @@ def build_tree_df(brand_season_df, brand_order):
     for brand in brand_order:
         brand_df = brand_season_df[brand_season_df["브랜드"] == brand]
         if brand_df.empty:
-            rows.append({"path": [brand], "발주 STY수": 0, "발주액": 0, "입고 STY수": 0, "입고액": 0, "출고 STY수": 0, "출고액": 0, "판매 STY수": 0, "판매액": 0})
+            rows.append({"path": brand, "발주 STY수": 0, "발주액": 0, "입고 STY수": 0, "입고액": 0, "출고 STY수": 0, "출고액": 0, "판매 STY수": 0, "판매액": 0})
             continue
         total = brand_df.sum(numeric_only=True)
         rows.append({
-            "path": [brand],
+            "path": brand,
             "발주 STY수": int(total["발주 STY수"]), "발주액": int(total["발주액"]),
             "입고 STY수": int(total["입고 STY수"]), "입고액": int(total["입고액"]),
             "출고 STY수": int(total["출고 STY수"]), "출고액": int(total["출고액"]),
             "판매 STY수": int(total["판매 STY수"]), "판매액": int(total["판매액"]),
         })
         for _, row in brand_df.sort_values("시즌").iterrows():
+            s = str(row["시즌"]).strip()
             rows.append({
-                "path": [brand, str(row["시즌"])],
+                "path": f"{brand}|{s}",
                 "발주 STY수": int(row["발주 STY수"]), "발주액": int(row["발주액"]),
                 "입고 STY수": int(row["입고 STY수"]), "입고액": int(row["입고액"]),
                 "출고 STY수": int(row["출고 STY수"]), "출고액": int(row["출고액"]),
@@ -752,10 +753,11 @@ st.markdown('<div style="font-size:1.1rem;color:#cbd5e1;margin-bottom:0.5rem;">S
 st.caption("브랜드 옆 화살표를 누르면 시즌별 상세를 볼 수 있습니다")
 tree_df = build_tree_df(brand_season_df, [r["브랜드"] for r in inout_rows])
 gb = GridOptionsBuilder.from_dataframe(tree_df)
-gb.configure_column("path", hide=True)
+gb.configure_column("path", hide=True, width=0)
+get_data_path_js = JsCode("function(params) { var p = params.data.path; return typeof p === 'string' ? p.split('|') : (p || []); }")
 gb.configure_grid_options(
     treeData=True,
-    getDataPath=JsCode("function(params) { return params.data.path; }"),
+    getDataPath=get_data_path_js,
     autoGroupColumnDef={"headerName": "브랜드", "cellRendererParams": {"suppressCount": True}},
     groupDefaultExpanded=0,
 )
