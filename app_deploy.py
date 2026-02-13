@@ -982,7 +982,7 @@ def build_avg_days_cell(value_text):
     return f"<span class='avg-cell' data-tooltip='{tooltip}'>{dot_html}{safe_cell(value_text)}</span>"
 
 rate_tip = "(초록불) 90% 초과&#10;(노란불) 80% 초과&#10;(빨간불) 80% 이하"
-avg_tip = "온라인상품등록일 - 최초입고일"
+avg_tip = "(온라인상품등록일 - 최초입고일)"
 
 def _th_sort(label, col_index):
     """col_index: 1=입고스타일수, 2=온라인등록스타일수, 3=온라인등록율. 클릭 시 JS에서 정렬(새로고침 없음)."""
