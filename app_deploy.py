@@ -410,7 +410,9 @@ def load_brand_register_avg_days(reg_bytes=None, inout_bytes=None, _cache_key=No
             base_dt = base_map.get(style_norm)
             if base_dt is None or pd.isna(reg_dt.loc[idx]):
                 continue
-            diffs.append((reg_dt.loc[idx] - base_dt).days)
+            days = (reg_dt.loc[idx] - base_dt).days
+            # 온라인상품등록일 - 최초입고일이 음수면 해당 스타일은 0일로 처리
+            diffs.append(max(0, days))
         return float(sum(diffs)) / len(diffs) if diffs else None
     return None
 
