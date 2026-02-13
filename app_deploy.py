@@ -532,6 +532,36 @@ DARK_CSS = """
         font-size: 1.15rem;
         font-weight: 700;
     }
+    .monitor-table .rate-help, .monitor-table .avg-help, .monitor-table .sum-help {
+        position: relative;
+        display: inline-block;
+        cursor: help;
+    }
+    .monitor-table .rate-help::after, .monitor-table .avg-help::after, .monitor-table .sum-help::after {
+        content: "";
+        position: absolute;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.15s ease-in-out;
+        left: 50%;
+        transform: translateX(-50%);
+        bottom: calc(100% + 6px);
+        white-space: pre;
+        word-break: keep-all;
+        width: max-content;
+        max-width: 280px;
+        background: #111827;
+        color: #f1f5f9;
+        padding: 6px 8px;
+        border-radius: 6px;
+        font-size: 0.85rem;
+        text-align: left;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.35);
+        z-index: 20;
+    }
+    .monitor-table .rate-help:hover::after { content: attr(data-tooltip); opacity: 1; }
+    .monitor-table .avg-help:hover::after { content: attr(data-tooltip); opacity: 1; }
+    .monitor-table .sum-help:hover::after { content: attr(data-tooltip); opacity: 1; }
     .inout-table {
         width: 100%;
         border-collapse: collapse;
@@ -684,7 +714,6 @@ st.markdown('<div class="section-title">브랜드별 상품등록 모니터링</
 
 # 표 전용 (필터 무시, 전체 브랜드)
 df_style_unique = df_style_all.drop_duplicates(subset=["브랜드", "시즌", "스타일코드"])
-style_count_all = df_style_unique.groupby("브랜드")["스타일코드"].nunique()
 in_count_all = df_style_unique[df_style_unique["입고 여부"] == "Y"].groupby("브랜드")["스타일코드"].nunique()
 reg_count_all = df_style_unique[df_style_unique["온라인상품등록여부"] == "등록"].groupby("브랜드")["스타일코드"].nunique()
 all_brands = sorted(df_style_unique["브랜드"].unique())
@@ -693,6 +722,9 @@ table_df["입고스타일수"] = table_df["브랜드"].map(in_count_all).fillna(
 table_df["온라인등록스타일수"] = table_df["브랜드"].map(reg_count_all).fillna(0).astype(int)
 table_df["온라인등록율"] = (table_df["온라인등록스타일수"] / table_df["입고스타일수"].replace(0, 1)).round(2)
 table_df["전체 미등록스타일"] = table_df["입고스타일수"] - table_df["온라인등록스타일수"]
+table_df["등록수"] = table_df["온라인등록스타일수"]
+table_df["평균 등록 소요일수"] = "-"
+table_df["미분배(분배팀)"] = "-"
 bu_labels = {label for label, _ in bu_groups}
 monitor_df = table_df.copy()
 monitor_df["_등록율"] = (monitor_df["온라인등록율"] * 100).astype(int).astype(str) + "%"
@@ -701,14 +733,27 @@ monitor_df["_미등록"] = monitor_df["전체 미등록스타일"].astype(int)
 def safe_cell(v):
     s = html_lib.escape(str(v)) if v is not None and str(v) != "nan" else ""
     return s
+rate_tip = "(초록불) 90% 초과&#10;(노란불) 80% 초과&#10;(빨간불) 80% 이하"
+avg_tip = "온라인상품등록일 - 최초입고일"
+sum_tip = "입고스타일수 - 온라인등록스타일수"
 header_monitor = (
-    "<tr><th>브랜드</th><th>입고스타일수</th><th>온라인등록<br>스타일수</th><th>온라인<br>등록율</th><th>전체 미등록 스타일</th></tr>"
+    "<tr>"
+    "<th>브랜드</th>"
+    "<th>입고스타일수</th>"
+    "<th>온라인등록<br>스타일수</th>"
+    f"<th><span class='rate-help' data-tooltip='{rate_tip}'>온라인<br>등록율</span></th>"
+    f"<th><span class='avg-help' data-tooltip='{avg_tip}'>평균 등록 소요일수<br><span style='font-size:0.8rem;font-weight:500;color:#94a3b8;'>온라인상품등록일 - 최초입고일</span></span></th>"
+    "<th>등록수</th>"
+    f"<th><span class='rate-help' data-tooltip='{rate_tip}'>온라인등록율</span></th>"
+    f"<th><span class='sum-help' data-tooltip='{sum_tip}'>전체 미등록 스타일</span></th>"
+    "<th>미분배<br>(분배팀)</th>"
+    "</tr>"
 )
 def _fmt(n):
     return f"{int(n):,}"
 body_monitor = "".join(
     ("<tr class='bu-row'>" if r["브랜드"] in bu_labels else "<tr>")
-    + f"<td>{safe_cell(r['브랜드'])}</td><td>{safe_cell(_fmt(r['입고스타일수']))}</td><td>{safe_cell(_fmt(r['온라인등록스타일수']))}</td><td>{safe_cell(r['_등록율'])}</td><td>{safe_cell(_fmt(r['_미등록']))}</td></tr>"
+    + f"<td>{safe_cell(r['브랜드'])}</td><td>{safe_cell(_fmt(r['입고스타일수']))}</td><td>{safe_cell(_fmt(r['온라인등록스타일수']))}</td><td>{safe_cell(r['_등록율'])}</td><td>{safe_cell(r['평균 등록 소요일수'])}</td><td>{safe_cell(_fmt(r['등록수']))}</td><td>{safe_cell(r['_등록율'])}</td><td>{safe_cell(_fmt(r['_미등록']))}</td><td>{safe_cell(r['미분배(분배팀)'])}</td></tr>"
     for _, r in monitor_df.iterrows()
 )
 st.markdown(f"""
