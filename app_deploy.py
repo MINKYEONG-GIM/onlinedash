@@ -413,17 +413,23 @@ def _col_letter(n):
 def _norm_season_value(val):
     """시트 시즌 셀 값을 필터 옵션과 비교할 수 있게 정규화.
     예: '2시즌', '시즌2' -> '2'. 'g2', 'G2'처럼 접두어+시즌 형태면 2번째 글자만 시즌으로 사용 (g2 -> '2').
-    '12', '22' 등 숫자 두 자리는 첫 글자만 사용. 대소문자 무시."""
+    '12', '22' 등 숫자 두 자리는 첫 글자만 사용. 연도(2024, 2026 등)는 시즌이 아니므로 빈값 반환. 대소문자 무시."""
     if val is None or pd.isna(val):
         return ""
-    # Excel에서 숫자(2, 2.0)로 읽힌 경우: "2"로 통일
+    # Excel에서 숫자로 읽힌 경우: 연도(1900~2100)는 제외, 시즌 1/2 등만 허용
     if isinstance(val, (int, float)) and val == int(val):
-        return str(int(val))
+        v = int(val)
+        if 1900 <= v <= 2100:
+            return ""  # 연도로 추정
+        return str(v) if -100 < v < 100 else ""
     s = str(val).strip().replace("시즌", "").replace(" ", "").strip()
     # "2.0"처럼 문자열로 된 숫자 보정
     if s.endswith(".0") and len(s) >= 2 and s[:-2].replace("-", "").isdigit():
         return s[0] if s[0] != "-" else (s[1] if len(s) > 2 else "")
     if not s:
+        return ""
+    # 3자리 이상 숫자(연도 등)는 시즌이 아님
+    if s.isdigit() and len(s) >= 3:
         return ""
     # 대소문자 무시하여 G2/g2 등 모두 동일하게 처리
     s = s.upper()
@@ -489,7 +495,7 @@ def load_brand_metric_days(target_keywords, io_bytes=None, _cache_key=None, _cac
     header_cell = f"{_col_letter(col_idx)}{header_row_idx + 1}"
     return float(values.mean()), int(values.count()), header_cell
 
-@st.cache_data
+@st.cache_data(ttl=60)
 def load_brand_registered_style_count(io_bytes=None, _cache_key=None, _cache_suffix="reg_count", style_prefix=None, selected_seasons=None):
     """스타일코드+공홈등록일 모두 있는 유니크 스타일 수. 시즌 필터 적용."""
     if _cache_key is None:
@@ -539,7 +545,10 @@ def load_brand_registered_style_count(io_bytes=None, _cache_key=None, _cache_suf
 
         style_col = find_col("스타일코드") or find_col("스타일")
         register_col = find_col("공홈등록일") or find_col("등록일")
-        register_status_col = find_col("공홈등록여부") or find_col("등록여부")  # 구글시트: "공홈 등록여부" 등 (normalize로 공백 제거됨)
+        # 구글시트: "공홈 등록여부" 등 (normalize로 공백 제거 시 "공홈등록여부")
+        register_status_col = find_col("공홈등록여부") or find_col("등록여부") or (
+            next((idx for idx, v in enumerate(header_vals) if "등록" in v and "여부" in v), None)
+        )
         season_col = find_col("시즌") or find_col_exact("시즌") or find_col("Season") or find_col("season")
         # 시즌이 다른 행에 있으면 상단 몇 행에서 해당 열 찾기 (selected_seasons 있을 때만)
         if selected_seasons and season_col is None and df_raw.shape[1] > 0:
