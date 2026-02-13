@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import html as html_lib
+from urllib.parse import quote
 import streamlit as st
 import pandas as pd
 from io import BytesIO
@@ -771,16 +772,16 @@ monitor_df = table_df.copy()
 monitor_df["_등록율"] = (monitor_df["온라인등록율"] * 100).astype(int).astype(str) + "%"
 monitor_df["_미등록"] = monitor_df["전체 미등록스타일"].astype(int)
 
-# 정렬: 입고스타일수 / 온라인등록 스타일수 / 온라인 등록율, 오름차순·내림차순
-sort_col_map = {"입고스타일수": "입고스타일수", "온라인등록 스타일수": "온라인등록스타일수", "온라인 등록율": "온라인등록율"}
-st.markdown('<div style="font-size:0.9rem;color:#94a3b8;margin-bottom:0.25rem;">표 정렬</div>', unsafe_allow_html=True)
-col_sort, col_order = st.columns([2, 2])
-with col_sort:
-    sort_by = st.selectbox("정렬 기준", options=list(sort_col_map.keys()), key="monitor_sort_by")
-with col_order:
-    sort_asc = st.selectbox("정렬 순서", options=["오름차순", "내림차순"], index=1, key="monitor_sort_order")
-sort_key = sort_col_map[sort_by]
-monitor_df = monitor_df.sort_values(sort_key, ascending=(sort_asc == "오름차순")).reset_index(drop=True)
+# 정렬: 헤더 화살표 클릭 시 쿼리파라미터로 오름/내림차순
+sort_col = st.query_params.get("sort", "입고스타일수")
+order = st.query_params.get("order", "desc")
+if sort_col not in ("입고스타일수", "온라인등록스타일수", "온라인등록율"):
+    sort_col = "입고스타일수"
+monitor_df = monitor_df.sort_values(sort_col, ascending=(order == "asc")).reset_index(drop=True)
+
+def _sort_link(col_param, label_br):
+    q = quote(col_param, safe="")
+    return f"<span class='th-sort'>{label_br} <a class='sort-arrow' href='?sort={q}&order=asc' title='오름차순'>↑</a> <a class='sort-arrow' href='?sort={q}&order=desc' title='내림차순'>↓</a></span>"
 
 def safe_cell(v):
     s = html_lib.escape(str(v)) if v is not None and str(v) != "nan" else ""
@@ -827,15 +828,18 @@ def build_avg_days_cell(value_text):
 rate_tip = "(초록불) 90% 초과&#10;(노란불) 80% 초과&#10;(빨간불) 80% 이하"
 avg_tip = "온라인상품등록일 - 최초입고일"
 sum_tip = "입고스타일수 - 온라인등록스타일수"
+h_in = _sort_link("입고스타일수", "입고스타일수")
+h_reg = _sort_link("온라인등록스타일수", "온라인등록<br>스타일수")
+h_rate = _sort_link("온라인등록율", "온라인<br>등록율")
 header_monitor = (
     "<tr>"
     "<th>브랜드</th>"
-    "<th>입고스타일수</th>"
-    "<th>온라인등록<br>스타일수</th>"
+    f"<th>{h_in}</th>"
+    f"<th>{h_reg}</th>"
     f"<th><span class='rate-help' data-tooltip='{rate_tip}'>온라인<br>등록율</span></th>"
     f"<th><span class='avg-help' data-tooltip='{avg_tip}'>평균 등록 소요일수<br><span style='font-size:0.8rem;font-weight:500;color:#94a3b8;'>온라인상품등록일 - 최초입고일</span></span></th>"
     "<th>등록수</th>"
-    f"<th><span class='rate-help' data-tooltip='{rate_tip}'>온라인등록율</span></th>"
+    f"<th>{h_rate}</th>"
     f"<th><span class='sum-help' data-tooltip='{sum_tip}'>전체 미등록 스타일</span></th>"
     "<th>미분배<br>(분배팀)</th>"
     "</tr>"
