@@ -430,11 +430,13 @@ def _norm_season_value(val):
     return s[0]
 
 def _season_filter_mask(series, selected_seasons):
-    """데이터 시리즈에서 selected_seasons에 포함되는 행만 True. selected_seasons 비어있으면 전부 True."""
+    """데이터 시리즈에서 selected_seasons에 포함되는 행만 True. selected_seasons 비어있으면 전부 True.
+    비교 시 데이터와 selected_seasons 모두 _norm_season_value로 정규화하여 일치시킴 (예: '2'와 'G2' 동일 취급)."""
     if not selected_seasons:
         return pd.Series(True, index=series.index)
     norm = series.astype(str).map(_norm_season_value)
-    return norm.isin([str(s).strip()[:1] for s in selected_seasons])
+    norm_selected = [_norm_season_value(s) for s in selected_seasons]
+    return norm.isin(norm_selected)
 
 @st.cache_data
 def load_brand_metric_days(target_keywords, io_bytes=None, _cache_key=None, _cache_suffix="metric"):
@@ -543,12 +545,24 @@ def load_brand_registered_style_count(io_bytes=None, _cache_key=None, _cache_suf
         if selected_seasons and season_col is not None and season_col < data.shape[1]:
             mask = _season_filter_mask(data.iloc[:, season_col], selected_seasons)
             data = data.loc[mask]
+
+        def _is_valid_reg_date(v):
+            """공홈등록일로 유효한 값만: None, NaN, 빈문자, 0, '0', '0.0' 제외."""
+            if v is None or pd.isna(v):
+                return False
+            s = str(v).strip()
+            if not s or s in ("0", "0.0"):
+                return False
+            if isinstance(v, (int, float)) and v == 0:
+                return False
+            return True
+
         style_set = set()
         for _, row in data.iterrows():
             style_val = row.iloc[style_col] if style_col < len(row) else None
             reg_val = row.iloc[register_col] if register_col < len(row) else None
             style_text = "" if style_val is None else str(style_val).strip()
-            reg_ok = reg_val is not None and str(reg_val).strip() != ""
+            reg_ok = _is_valid_reg_date(reg_val)
             if reg_ok and style_text:
                 if style_prefix is None or style_text.upper().startswith(style_prefix):
                     style_set.add(style_text)
