@@ -415,7 +415,13 @@ def _norm_season_value(val):
     예: '2시즌', '시즌2' -> '2'. 'g2', 'G2'처럼 접두어+시즌 형태면 2번째 글자를 시즌으로 사용 (g2 -> '2')."""
     if val is None or pd.isna(val):
         return ""
+    # Excel에서 숫자(2, 2.0)로 읽힌 경우: "2"로 통일
+    if isinstance(val, (int, float)) and val == int(val):
+        return str(int(val))
     s = str(val).strip().replace("시즌", "").replace(" ", "").strip()
+    # "2.0"처럼 문자열로 된 숫자 보정
+    if s.endswith(".0") and len(s) >= 2 and s[:-2].replace("-", "").isdigit():
+        return s[0] if s[0] != "-" else (s[1] if len(s) > 2 else "")
     if not s:
         return ""
     # 시즌이 두 번째 글자인 경우(g2, g1, gA 등): 2번째 텍스트가 시즌 코드
@@ -518,7 +524,18 @@ def load_brand_registered_style_count(io_bytes=None, _cache_key=None, _cache_suf
 
         style_col = find_col("스타일코드") or find_col("스타일")
         register_col = find_col("공홈등록일") or find_col("등록일")
-        season_col = find_col("시즌")
+        season_col = find_col("시즌") or find_col("Season") or find_col("season")
+        # 시즌이 다른 행에 있으면 상단 몇 행에서 해당 열 찾기 (selected_seasons 있을 때만)
+        if selected_seasons and season_col is None and df_raw.shape[1] > 0:
+            for row_i in range(min(header_row_idx + 1, len(df_raw))):
+                for col_idx in range(df_raw.shape[1]):
+                    if col_idx < len(df_raw.iloc[row_i]):
+                        cell = normalize(str(df_raw.iloc[row_i, col_idx]))
+                        if "시즌" in cell or "Season" in cell.lower():
+                            season_col = col_idx
+                            break
+                if season_col is not None:
+                    break
         if style_col is None or register_col is None:
             continue
 
