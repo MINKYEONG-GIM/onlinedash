@@ -411,11 +411,17 @@ def _col_letter(n):
     return s
 
 def _norm_season_value(val):
-    """시트 시즌 셀 값을 필터 옵션과 비교할 수 있게 정규화 (예: '2시즌', '시즌2' -> '2')."""
+    """시트 시즌 셀 값을 필터 옵션과 비교할 수 있게 정규화.
+    예: '2시즌', '시즌2' -> '2'. 'g2', 'G2'처럼 접두어+시즌 형태면 2번째 글자를 시즌으로 사용 (g2 -> '2')."""
     if val is None or pd.isna(val):
         return ""
     s = str(val).strip().replace("시즌", "").replace(" ", "").strip()
-    return s[:1] if s else ""
+    if not s:
+        return ""
+    # 시즌이 두 번째 글자인 경우(g2, g1, gA 등): 2번째 텍스트가 시즌 코드
+    if len(s) >= 2:
+        return s[1]
+    return s[0]
 
 def _season_filter_mask(series, selected_seasons):
     """데이터 시리즈에서 selected_seasons에 포함되는 행만 True. selected_seasons 비어있으면 전부 True."""
