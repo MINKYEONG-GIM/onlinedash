@@ -561,6 +561,9 @@ DARK_CSS = """
     .monitor-table .rate-help:hover::after { content: attr(data-tooltip); opacity: 1; }
     .monitor-table .avg-help:hover::after { content: attr(data-tooltip); opacity: 1; }
     .monitor-table .sum-help:hover::after { content: attr(data-tooltip); opacity: 1; }
+    .monitor-table .th-sort { white-space: nowrap; }
+    .monitor-table .sort-arrow { color: #94a3b8; text-decoration: none; margin-left: 2px; font-size: 0.85rem; }
+    .monitor-table .sort-arrow:hover { color: #f1f5f9; }
     .monitor-table .rate-cell, .monitor-table .avg-cell {
         display: inline-flex;
         align-items: center;
@@ -830,18 +833,15 @@ avg_tip = "온라인상품등록일 - 최초입고일"
 sum_tip = "입고스타일수 - 온라인등록스타일수"
 h_in = _sort_link("입고스타일수", "입고스타일수")
 h_reg = _sort_link("온라인등록스타일수", "온라인등록<br>스타일수")
-h_rate = _sort_link("온라인등록율", "온라인<br>등록율")
+q_rate = quote("온라인등록율", safe="")
+h_rate_arrows = f"<a class='sort-arrow' href='?sort={q_rate}&order=asc' title='오름차순'>↑</a> <a class='sort-arrow' href='?sort={q_rate}&order=desc' title='내림차순'>↓</a>"
 header_monitor = (
     "<tr>"
     "<th>브랜드</th>"
     f"<th>{h_in}</th>"
     f"<th>{h_reg}</th>"
-    f"<th><span class='rate-help' data-tooltip='{rate_tip}'>온라인<br>등록율</span></th>"
+    f"<th><span class='th-sort'><span class='rate-help' data-tooltip='{rate_tip}'>온라인<br>등록율</span> {h_rate_arrows}</span></th>"
     f"<th><span class='avg-help' data-tooltip='{avg_tip}'>평균 등록 소요일수<br><span style='font-size:0.8rem;font-weight:500;color:#94a3b8;'>온라인상품등록일 - 최초입고일</span></span></th>"
-    "<th>등록수</th>"
-    f"<th>{h_rate}</th>"
-    f"<th><span class='sum-help' data-tooltip='{sum_tip}'>전체 미등록 스타일</span></th>"
-    "<th>미분배<br>(분배팀)</th>"
     "</tr>"
 )
 def _fmt(n):
@@ -855,10 +855,6 @@ def _row_monitor(r):
         f"<td>{safe_cell(_fmt(r['온라인등록스타일수']))}</td>"
         f"<td>{rate_cell}</td>"
         f"<td>{avg_cell}</td>"
-        f"<td>{safe_cell(_fmt(r['등록수']))}</td>"
-        f"<td>{rate_cell}</td>"
-        f"<td>{safe_cell(_fmt(r['_미등록']))}</td>"
-        f"<td>{safe_cell(r['미분배(분배팀)'])}</td>"
     )
 body_monitor = "".join(
     ("<tr class='bu-row'>" if r["브랜드"] in bu_labels else "<tr>") + _row_monitor(r) + "</tr>"
