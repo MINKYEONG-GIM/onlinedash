@@ -483,6 +483,21 @@ DARK_CSS = """
     }
     .kpi-card-dark .label { font-size: 1.1rem; margin-bottom: 0.3rem; color: #cbd5e1; }
     .kpi-card-dark .value { font-size: 1rem; font-weight: 700; color: #f1f5f9; }
+    .kpi-card-half {
+        background: #1e293b;
+        color: #f1f5f9;
+        border-radius: 10px;
+        padding: 0.5rem 1rem;
+        text-align: center;
+        font-weight: 600;
+        height: 50px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        border: 1px solid #334155;
+    }
+    .kpi-card-half .label { font-size: 0.9rem; color: #cbd5e1; }
+    .kpi-card-half .value { font-size: 0.9rem; font-weight: 700; }
     .monitor-table {
         width: 100%;
         border-collapse: collapse;
@@ -648,13 +663,8 @@ with k3:
 
 with k_right:
     st.markdown(
-        f'<div class="kpi-card-dark" style="margin-bottom:0.5rem;"><span class="label">온라인 판매</span>'
-        f'<span class="value">{_eok(online_sale_amt)} 억원</span></div>',
-        unsafe_allow_html=True
-    )
-    st.markdown(
-        f'<div class="kpi-card-dark"><span class="label">오프라인 판매</span>'
-        f'<span class="value">{_eok(offline_sale_amt)} 억원</span></div>',
+        f'<div class="kpi-card-half" style="margin-bottom:4px;"><span class="label">온라인 판매</span><span class="value">{_eok(online_sale_amt)} 억원</span></div>'
+        f'<div class="kpi-card-half"><span class="label">오프라인 판매</span><span class="value">{_eok(offline_sale_amt)} 억원</span></div>',
         unsafe_allow_html=True
     )
 
