@@ -60,6 +60,8 @@ BRAND_TO_KEY = {
     "스파오": "spao", "후아유": "whoau", "클라비스": "clavis", "미쏘": "mixxo",
     "로엠": "roem", "슈펜": "shoopen", "에블린": "eblin",
 }
+# 상품등록 시트가 없는 브랜드 (온라인등록 스타일수/등록율/평균등록소요일수는 '-' 표시)
+NO_REG_SHEET_BRANDS = {"뉴발란스", "뉴발란스키즈"}
 
 # =====================================================
 # Google 인증 / 시트 다운로드
@@ -761,9 +763,17 @@ table_df["전체 미등록스타일"] = table_df["입고스타일수"] - table_d
 table_df["등록수"] = table_df["온라인등록스타일수"]
 table_df["평균 등록 소요일수"] = "-"
 table_df["미분배(분배팀)"] = "-"
+# 상품등록 시트 없는 브랜드: 등록 관련 수치는 표시용 '-' (정렬 시 하단으로)
+for b in NO_REG_SHEET_BRANDS:
+    if b in table_df["브랜드"].values:
+        table_df.loc[table_df["브랜드"] == b, "온라인등록스타일수"] = -1
+        table_df.loc[table_df["브랜드"] == b, "온라인등록율"] = -1.0
 bu_labels = {label for label, _ in bu_groups}
 monitor_df = table_df.copy()
-monitor_df["_등록율"] = (monitor_df["온라인등록율"] * 100).astype(int).astype(str) + "%"
+monitor_df["_등록율"] = monitor_df.apply(
+    lambda r: "-" if r["브랜드"] in NO_REG_SHEET_BRANDS else (int(r["온라인등록율"] * 100) if r["온라인등록율"] >= 0 else 0).__str__() + "%",
+    axis=1,
+)
 monitor_df["_미등록"] = monitor_df["전체 미등록스타일"].astype(int)
 
 # 정렬 상태 (session_state, 새로고침 없음)
@@ -851,12 +861,14 @@ header_monitor = (
 def _fmt(n):
     return f"{int(n):,}"
 def _row_monitor(r):
-    rate_cell = build_rate_cell(r.get("온라인등록율"), r.get("_등록율"))
-    avg_cell = build_avg_days_cell(r.get("평균 등록 소요일수"))
+    no_reg = r["브랜드"] in NO_REG_SHEET_BRANDS
+    reg_sty_display = "-" if no_reg else _fmt(r["온라인등록스타일수"])
+    rate_cell = safe_cell("-") if no_reg else build_rate_cell(r.get("온라인등록율"), r.get("_등록율"))
+    avg_cell = safe_cell("-") if no_reg else build_avg_days_cell(r.get("평균 등록 소요일수"))
     return (
         f"<td>{safe_cell(r['브랜드'])}</td>"
         f"<td>{safe_cell(_fmt(r['입고스타일수']))}</td>"
-        f"<td>{safe_cell(_fmt(r['온라인등록스타일수']))}</td>"
+        f"<td>{safe_cell(reg_sty_display)}</td>"
         f"<td>{rate_cell}</td>"
         f"<td>{avg_cell}</td>"
     )
