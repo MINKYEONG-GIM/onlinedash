@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import os
 import html as html_lib
-from urllib.parse import quote
 import streamlit as st
 import pandas as pd
 from io import BytesIO
@@ -756,16 +755,34 @@ monitor_df = table_df.copy()
 monitor_df["_등록율"] = (monitor_df["온라인등록율"] * 100).astype(int).astype(str) + "%"
 monitor_df["_미등록"] = monitor_df["전체 미등록스타일"].astype(int)
 
-# 정렬: 헤더 화살표 클릭 시 쿼리파라미터로 오름/내림차순
-sort_col = st.query_params.get("sort", "입고스타일수")
-order = st.query_params.get("order", "desc")
-if sort_col not in ("입고스타일수", "온라인등록스타일수", "온라인등록율"):
-    sort_col = "입고스타일수"
-monitor_df = monitor_df.sort_values(sort_col, ascending=(order == "asc")).reset_index(drop=True)
+# 정렬 상태 (session_state, 새로고침 없음)
+if "monitor_sort_col" not in st.session_state:
+    st.session_state.monitor_sort_col = "입고스타일수"
+if "monitor_sort_order" not in st.session_state:
+    st.session_state.monitor_sort_order = "desc"
 
-def _sort_link(col_param, label_br):
-    q = quote(col_param, safe="")
-    return f"<span class='th-sort'>{label_br} <a class='sort-arrow' href='?sort={q}&order=asc' title='오름차순'>↑</a> <a class='sort-arrow' href='?sort={q}&order=desc' title='내림차순'>↓</a></span>"
+def set_sort(col):
+    if st.session_state.monitor_sort_col == col:
+        st.session_state.monitor_sort_order = "asc" if st.session_state.monitor_sort_order == "desc" else "desc"
+    else:
+        st.session_state.monitor_sort_col = col
+        st.session_state.monitor_sort_order = "desc"
+
+col1, col2, col3 = st.columns([2, 2, 2])
+with col1:
+    if st.button("입고스타일수 정렬", key="btn_sort_in"):
+        set_sort("입고스타일수")
+with col2:
+    if st.button("온라인등록 스타일수 정렬", key="btn_sort_reg"):
+        set_sort("온라인등록스타일수")
+with col3:
+    if st.button("온라인 등록율 정렬", key="btn_sort_rate"):
+        set_sort("온라인등록율")
+
+monitor_df = monitor_df.sort_values(
+    st.session_state.monitor_sort_col,
+    ascending=(st.session_state.monitor_sort_order == "asc")
+).reset_index(drop=True)
 
 def safe_cell(v):
     s = html_lib.escape(str(v)) if v is not None and str(v) != "nan" else ""
@@ -811,17 +828,12 @@ def build_avg_days_cell(value_text):
 
 rate_tip = "(초록불) 90% 초과&#10;(노란불) 80% 초과&#10;(빨간불) 80% 이하"
 avg_tip = "온라인상품등록일 - 최초입고일"
-sum_tip = "입고스타일수 - 온라인등록스타일수"
-h_in = _sort_link("입고스타일수", "입고스타일수")
-h_reg = _sort_link("온라인등록스타일수", "온라인등록<br>스타일수")
-q_rate = quote("온라인등록율", safe="")
-h_rate_arrows = f"<a class='sort-arrow' href='?sort={q_rate}&order=asc' title='오름차순'>↑</a> <a class='sort-arrow' href='?sort={q_rate}&order=desc' title='내림차순'>↓</a>"
 header_monitor = (
     "<tr>"
     "<th>브랜드</th>"
-    f"<th>{h_in}</th>"
-    f"<th>{h_reg}</th>"
-    f"<th><span class='th-sort'><span class='rate-help' data-tooltip='{rate_tip}'>온라인<br>등록율</span> {h_rate_arrows}</span></th>"
+    "<th>입고스타일수</th>"
+    "<th>온라인등록<br>스타일수</th>"
+    f"<th><span class='rate-help' data-tooltip='{rate_tip}'>온라인<br>등록율</span></th>"
     f"<th><span class='avg-help' data-tooltip='{avg_tip}'>평균 등록 소요일수<br><span style='font-size:0.8rem;font-weight:500;color:#94a3b8;'>온라인상품등록일 - 최초입고일</span></span></th>"
     "</tr>"
 )
