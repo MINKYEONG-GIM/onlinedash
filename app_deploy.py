@@ -982,7 +982,10 @@ def build_avg_days_cell(value_text):
     return f"<span class='avg-cell' data-tooltip='{tooltip}'>{dot_html}{safe_cell(value_text)}</span>"
 
 rate_tip = "(초록불) 90% 초과&#10;(노란불) 80% 초과&#10;(빨간불) 80% 이하"
-avg_tip = "(온라인상품등록일 - 최초입고일)"
+avg_tip = "(초록불) 3일 이하&#10;(노란불) 5일 이하&#10;(빨간불) 5일 초과"
+# 호버 시 툴팁 노출용 (iframe에서 CSS 툴팁이 동작하지 않아 title 사용)
+rate_tip_title = "(초록불) 90% 초과\n(노란불) 80% 초과\n(빨간불) 80% 이하"
+avg_tip_title = "(초록불) 3일 이하\n(노란불) 5일 이하\n(빨간불) 5일 초과"
 
 def _th_sort(label, col_index):
     """col_index: 1=입고스타일수, 2=온라인등록스타일수, 3=온라인등록율. 클릭 시 JS에서 정렬(새로고침 없음)."""
@@ -991,7 +994,7 @@ def _th_sort(label, col_index):
 
 _th_rate = (
     "<th class='th-sort' data-col-index='3' data-order='desc'>"
-    "<span class='rate-help' data-tooltip='" + rate_tip + "'>온라인<br>등록율</span>"
+    "<span class='rate-help' title='" + html_lib.escape(rate_tip_title, quote=True).replace("\n", "&#10;") + "'>온라인<br>등록율</span>"
     + "<a class='sort-arrow' href='javascript:void(0)' role='button' data-col='3' title='정렬'>↕</a>"
     + "</th>"
 )
@@ -1001,7 +1004,7 @@ header_monitor = (
     + _th_sort("입고스타일수", 1)
     + _th_sort("온라인등록<br>스타일수", 2)
     + _th_rate
-    + f"<th><span class='avg-help' data-tooltip='{avg_tip}'>평균 등록 소요일수<br><span style='font-size:0.8rem;font-weight:500;color:#94a3b8;'>온라인상품등록일 - 최초입고일</span></span></th>"
+    + f"<th><span class='avg-help' title='{html_lib.escape(avg_tip_title, quote=True).replace(chr(10), '&#10;')}'>평균 등록 소요일수<br><span style='font-size:0.8rem;font-weight:500;color:#94a3b8;'>온라인상품등록일 - 최초입고일</span></span></th>"
     "</tr>"
 )
 def _fmt(n):
@@ -1037,6 +1040,10 @@ body {{ margin:0; background:#0f172a; color:#f1f5f9; font-family:inherit; }}
 .monitor-table .rate-cell, .monitor-table .avg-cell {{ display:inline-flex; align-items:center; gap:6px; justify-content:center; }}
 .monitor-table .rate-dot {{ width:16px; height:16px; border-radius:50%; display:inline-block; }}
 .monitor-table .rate-red {{ background:#ef4444; }} .monitor-table .rate-yellow {{ background:#f59e0b; }} .monitor-table .rate-green {{ background:#22c55e; }}
+.monitor-table .rate-help, .monitor-table .avg-help {{ position:relative; display:inline-block; cursor:help; }}
+.monitor-table .rate-help::after, .monitor-table .avg-help::after {{ content:""; position:absolute; opacity:0; pointer-events:none; transition:opacity 0.15s ease-in-out; left:50%; transform:translateX(-50%); bottom:calc(100% + 6px); white-space:pre-line; word-break:keep-all; width:max-content; max-width:280px; background:#111827; color:#f1f5f9; padding:6px 8px; border-radius:6px; font-size:0.85rem; text-align:left; box-shadow:0 4px 12px rgba(0,0,0,0.35); z-index:20; }}
+.monitor-table .rate-help:hover::after {{ content:attr(data-tooltip); opacity:1; }}
+.monitor-table .avg-help:hover::after {{ content:attr(data-tooltip); opacity:1; }}
 </style></head><body>
 <table class="monitor-table" id="monitor-table-register">
 <thead>{header_monitor}</thead>
