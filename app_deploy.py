@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import os
 import html as html_lib
-from urllib.parse import quote
 import streamlit as st
 import pandas as pd
 from io import BytesIO
@@ -891,8 +890,10 @@ df_for_table = df_style_all.copy()
 if selected_seasons and set(selected_seasons) != set(seasons):
     df_for_table = df_for_table[_season_matches(df_for_table["시즌"], selected_seasons)]
 df_style_unique = df_for_table.drop_duplicates(subset=["브랜드", "시즌", "스타일코드"])
-in_count_all = df_style_unique[df_style_unique["입고 여부"] == "Y"].groupby("브랜드")["스타일코드"].nunique()
-reg_count_all = df_style_unique[df_style_unique["온라인상품등록여부"] == "등록"].groupby("브랜드")["스타일코드"].nunique()
+# 입고된 스타일만(최초입고일 있음) → 그 중 온라인 등록된 스타일만 카운트
+df_in = df_style_unique[df_style_unique["입고 여부"] == "Y"]
+in_count_all = df_in.groupby("브랜드")["스타일코드"].nunique()
+reg_count_all = df_in[df_in["온라인상품등록여부"] == "등록"].groupby("브랜드")["스타일코드"].nunique()
 table_df = pd.DataFrame({"브랜드": all_brands})
 table_df["입고스타일수"] = table_df["브랜드"].map(in_count_all).fillna(0).astype(int)
 table_df["온라인등록스타일수"] = table_df["브랜드"].map(reg_count_all).fillna(0).astype(int)
@@ -933,25 +934,8 @@ monitor_df["_등록율"] = monitor_df.apply(
 )
 monitor_df["_미등록"] = monitor_df["전체 미등록스타일"].astype(int)
 
-# 정렬 상태 (session_state; 헤더 화살표 클릭 시 쿼리 파라미터로 반영)
-if "monitor_sort_col" not in st.session_state:
-    st.session_state.monitor_sort_col = "입고스타일수"
-if "monitor_sort_order" not in st.session_state:
-    st.session_state.monitor_sort_order = "desc"
-_sort_cols = ("입고스타일수", "온라인등록스타일수", "온라인등록율")
-try:
-    q = st.query_params
-    if q.get("sort") in _sort_cols:
-        st.session_state.monitor_sort_col = q["sort"]
-        if q.get("order") in ("asc", "desc"):
-            st.session_state.monitor_sort_order = q["order"]
-except Exception:
-    pass
-
-monitor_df = monitor_df.sort_values(
-    st.session_state.monitor_sort_col,
-    ascending=(st.session_state.monitor_sort_order == "asc")
-).reset_index(drop=True)
+# 초기 정렬만 적용 (이후 정렬은 클라이언트에서 화살표 클릭 시 JS로 처리, 새로고침 없음)
+monitor_df = monitor_df.sort_values("입고스타일수", ascending=False).reset_index(drop=True)
 
 def safe_cell(v):
     s = html_lib.escape(str(v)) if v is not None and str(v) != "nan" else ""
@@ -997,27 +981,23 @@ def build_avg_days_cell(value_text):
 
 rate_tip = "(초록불) 90% 초과&#10;(노란불) 80% 초과&#10;(빨간불) 80% 이하"
 avg_tip = "온라인상품등록일 - 최초입고일"
-_sc = st.session_state.monitor_sort_col
-_so = st.session_state.monitor_sort_order
 
-def _th_sort(label, col_key):
-    is_active = _sc == col_key
-    next_order = "asc" if (is_active and _so == "desc") else "desc"
-    arrow = "▼" if (is_active and _so == "desc") else ("▲" if (is_active and _so == "asc") else "↕")
-    qs = "?sort=" + quote(col_key) + "&order=" + next_order
-    inner = label + f"<a class='sort-arrow' href='{qs}' title='정렬'>{arrow}</a>"
-    return f"<th class='th-sort'>{inner}</th>"
+def _th_sort(label, col_index):
+    """col_index: 1=입고스타일수, 2=온라인등록스타일수, 3=온라인등록율. 클릭 시 JS에서 정렬(새로고침 없음)."""
+    inner = label + f"<a class='sort-arrow' href='javascript:void(0)' role='button' data-col='{col_index}' title='정렬'>↕</a>"
+    return f"<th class='th-sort' data-col-index='{col_index}' data-order='desc'>{inner}</th>"
 
 _th_rate = (
-    "<th><span class='rate-help' data-tooltip='" + rate_tip + "'>온라인<br>등록율</span>"
-    + ("<a class='sort-arrow' href='?sort=" + quote("온라인등록율") + "&order=" + ("asc" if (_sc == "온라인등록율" and _so == "desc") else "desc") + "' title='정렬'>" + ("▼" if (_sc == "온라인등록율" and _so == "desc") else ("▲" if (_sc == "온라인등록율" and _so == "asc") else "↕")) + "</a>")
+    "<th class='th-sort' data-col-index='3' data-order='desc'>"
+    "<span class='rate-help' data-tooltip='" + rate_tip + "'>온라인<br>등록율</span>"
+    + "<a class='sort-arrow' href='javascript:void(0)' role='button' data-col='3' title='정렬'>↕</a>"
     + "</th>"
 )
 header_monitor = (
     "<tr>"
     "<th>브랜드</th>"
-    + _th_sort("입고스타일수", "입고스타일수")
-    + _th_sort("온라인등록<br>스타일수", "온라인등록스타일수")
+    + _th_sort("입고스타일수", 1)
+    + _th_sort("온라인등록<br>스타일수", 2)
     + _th_rate
     + f"<th><span class='avg-help' data-tooltip='{avg_tip}'>평균 등록 소요일수<br><span style='font-size:0.8rem;font-weight:500;color:#94a3b8;'>온라인상품등록일 - 최초입고일</span></span></th>"
     "</tr>"
@@ -1040,14 +1020,84 @@ body_monitor = "".join(
     ("<tr class='bu-row'>" if r["브랜드"] in bu_labels else "<tr>") + _row_monitor(r) + "</tr>"
     for _, r in monitor_df.iterrows()
 )
-st.markdown(f"""
-<div class="monitor-table">
-<table class="monitor-table">
+# 테이블 + 클라이언트 정렬 스크립트 (새로고침/새 창 없이 JS로만 정렬)
+_monitor_table_html = f"""
+<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>
+body {{ margin:0; background:#0f172a; color:#f1f5f9; font-family:inherit; }}
+.monitor-table {{ width:100%; border-collapse:collapse; background:#1e293b; color:#f1f5f9; border:1px solid #334155; }}
+.monitor-table th, .monitor-table td {{ border:1px solid #334155; padding:6px 8px; text-align:center; font-size:0.95rem; }}
+.monitor-table thead th {{ background:#0f172a; color:#f1f5f9; font-weight:700; }}
+.monitor-table tr.bu-row td {{ background-color:#d9f7ee; color:#000; font-size:1.15rem; font-weight:700; }}
+.monitor-table th.th-sort {{ white-space:nowrap; cursor:default; }}
+.monitor-table th.th-sort .sort-arrow {{ color:#94a3b8; text-decoration:none; margin-left:4px; font-size:0.75rem; cursor:pointer; }}
+.monitor-table th.th-sort .sort-arrow:hover {{ color:#f1f5f9; }}
+.monitor-table .rate-cell, .monitor-table .avg-cell {{ display:inline-flex; align-items:center; gap:6px; justify-content:center; }}
+.monitor-table .rate-dot {{ width:16px; height:16px; border-radius:50%; display:inline-block; }}
+.monitor-table .rate-red {{ background:#ef4444; }} .monitor-table .rate-yellow {{ background:#f59e0b; }} .monitor-table .rate-green {{ background:#22c55e; }}
+</style></head><body>
+<table class="monitor-table" id="monitor-table-register">
 <thead>{header_monitor}</thead>
 <tbody>{body_monitor}</tbody>
 </table>
-</div>
-""", unsafe_allow_html=True)
+<script>
+(function(){{
+  var table = document.getElementById("monitor-table-register");
+  if (!table) return;
+  function getCellValue(td) {{
+    var t = (td && td.textContent || "").trim().replace(/[,%]/g, "");
+    if (t === "" || t === "-") return null;
+    var n = parseFloat(t);
+    return isNaN(n) ? t : n;
+  }}
+  function sortRows(tbody, colIndex, order) {{
+    var rows = Array.prototype.slice.call(tbody.querySelectorAll("tr"));
+    rows.sort(function(a, b) {{
+      var cellA = a.cells[colIndex], cellB = b.cells[colIndex];
+      var valA = getCellValue(cellA), valB = getCellValue(cellB);
+      if (valA === null) valA = order === "desc" ? -Infinity : Infinity;
+      if (valB === null) valB = order === "desc" ? -Infinity : Infinity;
+      if (typeof valA === "number" && typeof valB === "number")
+        return order === "desc" ? valB - valA : valA - valB;
+      var sA = String(valA), sB = String(valB);
+      if (sA < sB) return order === "desc" ? 1 : -1;
+      if (sA > sB) return order === "desc" ? -1 : 1;
+      return 0;
+    }});
+    rows.forEach(function(r) {{ tbody.appendChild(r); }});
+  }}
+  function updateArrows(activeCol, order) {{
+    var ths = table.querySelectorAll("thead th.th-sort");
+    ths.forEach(function(th) {{
+      var idx = th.getAttribute("data-col-index");
+      var a = th.querySelector("a.sort-arrow");
+      if (!a) return;
+      if (idx === String(activeCol)) {{ th.setAttribute("data-order", order); a.textContent = order === "desc" ? "▼" : "▲"; }}
+      else {{ th.setAttribute("data-order", "desc"); a.textContent = "↕"; }}
+    }});
+  }}
+  table.addEventListener("click", function(e) {{
+    var a = e.target.closest("a.sort-arrow");
+    if (!a) return;
+    e.preventDefault();
+    var th = a.closest("th.th-sort");
+    if (!th) return;
+    var colIndex = parseInt(th.getAttribute("data-col-index"), 10);
+    var order = th.getAttribute("data-order") === "desc" ? "asc" : "desc";
+    th.setAttribute("data-order", order);
+    updateArrows(colIndex, order);
+    var tbody = table.querySelector("tbody");
+    if (tbody) sortRows(tbody, colIndex, order);
+  }});
+}})();
+</script></body></html>
+"""
+try:
+    import streamlit.components.v1 as components
+    nrows = len(monitor_df)
+    components.html(_monitor_table_html, height=min(600, 120 + nrows * 28), scrolling=False)
+except Exception:
+    st.markdown(f"<div class='monitor-table'><table class='monitor-table' id='monitor-table-register'><thead>{header_monitor}</thead><tbody>{body_monitor}</tbody></table></div>", unsafe_allow_html=True)
 
 # 브랜드별 입출고 모니터링 (deploy와 동일: HTML 테이블 + 브랜드 클릭 시 시즌 토글)
 TABLE_COLS = ["발주 STY수", "발주액", "입고 STY수", "입고액", "출고 STY수", "출고액", "판매 STY수", "판매액"]
