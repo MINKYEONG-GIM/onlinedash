@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import html as html_lib
+from urllib.parse import quote
 import streamlit as st
 import pandas as pd
 from io import BytesIO
@@ -547,9 +548,9 @@ DARK_CSS = """
     .monitor-table .rate-help:hover::after { content: attr(data-tooltip); opacity: 1; }
     .monitor-table .avg-help:hover::after { content: attr(data-tooltip); opacity: 1; }
     .monitor-table .sum-help:hover::after { content: attr(data-tooltip); opacity: 1; }
-    .monitor-table .th-sort { white-space: nowrap; }
-    .monitor-table .sort-arrow { color: #94a3b8; text-decoration: none; margin-left: 2px; font-size: 0.85rem; }
-    .monitor-table .sort-arrow:hover { color: #f1f5f9; }
+    .monitor-table th.th-sort { white-space: nowrap; cursor: default; }
+    .monitor-table th.th-sort .sort-arrow { color: #94a3b8; text-decoration: none; margin-left: 4px; font-size: 0.75rem; cursor: pointer; }
+    .monitor-table th.th-sort .sort-arrow:hover { color: #f1f5f9; }
     .monitor-table .rate-cell, .monitor-table .avg-cell {
         display: inline-flex;
         align-items: center;
@@ -776,29 +777,20 @@ monitor_df["_등록율"] = monitor_df.apply(
 )
 monitor_df["_미등록"] = monitor_df["전체 미등록스타일"].astype(int)
 
-# 정렬 상태 (session_state, 새로고침 없음)
+# 정렬 상태 (session_state; 헤더 화살표 클릭 시 쿼리 파라미터로 반영)
 if "monitor_sort_col" not in st.session_state:
     st.session_state.monitor_sort_col = "입고스타일수"
 if "monitor_sort_order" not in st.session_state:
     st.session_state.monitor_sort_order = "desc"
-
-def set_sort(col):
-    if st.session_state.monitor_sort_col == col:
-        st.session_state.monitor_sort_order = "asc" if st.session_state.monitor_sort_order == "desc" else "desc"
-    else:
-        st.session_state.monitor_sort_col = col
-        st.session_state.monitor_sort_order = "desc"
-
-col1, col2, col3 = st.columns([2, 2, 2])
-with col1:
-    if st.button("입고스타일수 정렬", key="btn_sort_in"):
-        set_sort("입고스타일수")
-with col2:
-    if st.button("온라인등록 스타일수 정렬", key="btn_sort_reg"):
-        set_sort("온라인등록스타일수")
-with col3:
-    if st.button("온라인 등록율 정렬", key="btn_sort_rate"):
-        set_sort("온라인등록율")
+_sort_cols = ("입고스타일수", "온라인등록스타일수", "온라인등록율")
+try:
+    q = st.query_params
+    if q.get("sort") in _sort_cols:
+        st.session_state.monitor_sort_col = q["sort"]
+        if q.get("order") in ("asc", "desc"):
+            st.session_state.monitor_sort_order = q["order"]
+except Exception:
+    pass
 
 monitor_df = monitor_df.sort_values(
     st.session_state.monitor_sort_col,
@@ -849,13 +841,29 @@ def build_avg_days_cell(value_text):
 
 rate_tip = "(초록불) 90% 초과&#10;(노란불) 80% 초과&#10;(빨간불) 80% 이하"
 avg_tip = "온라인상품등록일 - 최초입고일"
+_sc = st.session_state.monitor_sort_col
+_so = st.session_state.monitor_sort_order
+
+def _th_sort(label, col_key):
+    is_active = _sc == col_key
+    next_order = "asc" if (is_active and _so == "desc") else "desc"
+    arrow = "▼" if (is_active and _so == "desc") else ("▲" if (is_active and _so == "asc") else "↕")
+    qs = "?sort=" + quote(col_key) + "&order=" + next_order
+    inner = label + f"<a class='sort-arrow' href='{qs}' title='정렬'>{arrow}</a>"
+    return f"<th class='th-sort'>{inner}</th>"
+
+_th_rate = (
+    "<th><span class='rate-help' data-tooltip='" + rate_tip + "'>온라인<br>등록율</span>"
+    + ("<a class='sort-arrow' href='?sort=" + quote("온라인등록율") + "&order=" + ("asc" if (_sc == "온라인등록율" and _so == "desc") else "desc") + "' title='정렬'>" + ("▼" if (_sc == "온라인등록율" and _so == "desc") else ("▲" if (_sc == "온라인등록율" and _so == "asc") else "↕")) + "</a>")
+    + "</th>"
+)
 header_monitor = (
     "<tr>"
     "<th>브랜드</th>"
-    "<th>입고스타일수</th>"
-    "<th>온라인등록<br>스타일수</th>"
-    f"<th><span class='rate-help' data-tooltip='{rate_tip}'>온라인<br>등록율</span></th>"
-    f"<th><span class='avg-help' data-tooltip='{avg_tip}'>평균 등록 소요일수<br><span style='font-size:0.8rem;font-weight:500;color:#94a3b8;'>온라인상품등록일 - 최초입고일</span></span></th>"
+    + _th_sort("입고스타일수", "입고스타일수")
+    + _th_sort("온라인등록<br>스타일수", "온라인등록스타일수")
+    + _th_rate
+    + f"<th><span class='avg-help' data-tooltip='{avg_tip}'>평균 등록 소요일수<br><span style='font-size:0.8rem;font-weight:500;color:#94a3b8;'>온라인상품등록일 - 최초입고일</span></span></th>"
     "</tr>"
 )
 def _fmt(n):
