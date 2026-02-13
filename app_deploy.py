@@ -413,7 +413,7 @@ def _col_letter(n):
 def _norm_season_value(val):
     """시트 시즌 셀 값을 필터 옵션과 비교할 수 있게 정규화.
     예: '2시즌', '시즌2' -> '2'. 'g2', 'G2'처럼 접두어+시즌 형태면 2번째 글자만 시즌으로 사용 (g2 -> '2').
-    '12', '22' 등 숫자 두 자리는 첫 글자만 사용하여 '12'->'1', '2'->'2' 로 구분."""
+    '12', '22' 등 숫자 두 자리는 첫 글자만 사용. 대소문자 무시."""
     if val is None or pd.isna(val):
         return ""
     # Excel에서 숫자(2, 2.0)로 읽힌 경우: "2"로 통일
@@ -425,6 +425,8 @@ def _norm_season_value(val):
         return s[0] if s[0] != "-" else (s[1] if len(s) > 2 else "")
     if not s:
         return ""
+    # 대소문자 무시하여 G2/g2 등 모두 동일하게 처리
+    s = s.upper()
     # g2, G2, gA 등 접두어(영문)+시즌 한 글자: 2번째 글자만 시즌으로 사용
     if len(s) >= 2 and s[0].isalpha():
         return s[1]
@@ -528,9 +530,17 @@ def load_brand_registered_style_count(io_bytes=None, _cache_key=None, _cache_suf
                     return idx
             return None
 
+        def find_col_exact(normalized_target):
+            """헤더가 정규화 문자열과 정확히 일치하는 열 인덱스 (공백 제거 후 비교)."""
+            for idx, v in enumerate(header_vals):
+                if v == normalized_target:
+                    return idx
+            return None
+
         style_col = find_col("스타일코드") or find_col("스타일")
         register_col = find_col("공홈등록일") or find_col("등록일")
-        season_col = find_col("시즌") or find_col("Season") or find_col("season")
+        register_status_col = find_col("공홈등록여부") or find_col("등록여부")  # 구글시트: "공홈 등록여부" 등 (normalize로 공백 제거됨)
+        season_col = find_col("시즌") or find_col_exact("시즌") or find_col("Season") or find_col("season")
         # 시즌이 다른 행에 있으면 상단 몇 행에서 해당 열 찾기 (selected_seasons 있을 때만)
         if selected_seasons and season_col is None and df_raw.shape[1] > 0:
             for row_i in range(min(header_row_idx + 1, len(df_raw))):
@@ -554,6 +564,8 @@ def load_brand_registered_style_count(io_bytes=None, _cache_key=None, _cache_suf
         if selected_seasons and season_col is not None and season_col < data.shape[1]:
             norm_selected = [_norm_season_value(s) for s in selected_seasons]
             mask = _season_filter_mask(data.iloc[:, season_col], norm_selected)
+            # 디버그: 시즌 열 인식/필터 확인 (138 안 나올 때 아래 주석 해제)
+            # print(f"[등록스타일수] 시트={sheet_name!r} 총 {len(data)}행 중 시즌 필터 적용 후 {mask.sum()}행 남음, norm_selected={norm_selected}")
             data = data.loc[mask]
 
         # 공홈등록일 존재 체크 (0, '0', '0.0', 빈값 제외)
@@ -566,6 +578,10 @@ def load_brand_registered_style_count(io_bytes=None, _cache_key=None, _cache_suf
             & ~reg_str.isin(["0", "0.0"])
             & ((reg_numeric.isna()) | (reg_numeric != 0))
         )
+        # 공홈등록여부 컬럼이 있으면 "등록"인 행만 온라인 등록으로 인정 (구글시트 구조)
+        if register_status_col is not None and register_status_col < data.shape[1]:
+            status_series = data.iloc[:, register_status_col].astype(str).str.strip()
+            reg_ok = reg_ok & (status_series.str.upper() == "등록")
 
         # 스타일코드 존재 체크 + style_prefix
         style_series = data.iloc[:, style_col].astype(str).str.strip()
@@ -793,7 +809,7 @@ _COMMON_HANDOVER = ["포토팀상품인계", "포토팀 상품인계", "상품�
 _COMMON_SHOOTING = ["촬영소요일", "촬영 소요일", "촬영기간"]
 _COMMON_REGISTER = ["상품등록소요일", "상품등록 소요일", "공홈등록소요일", "공홈등록 소요일", "등록소요일", "등록 소요일"]
 BRAND_METRICS_CFG = {
-    "스파오": {"src": "spao", "handover": [], "shooting": ["포토소요일"], "register": ["공홈등록소요일"], "style_prefix": None, "vname": "spao", "shoot_suffix": "photo"},
+    "스파오": {"src": "spao", "handover": [], "shooting": ["포토소요일"], "register": ["공홈등록소요일"], "style_prefix": "SP", "vname": "spao", "shoot_suffix": "photo"},
     "후아유": {"src": "whoau", "handover": _COMMON_HANDOVER, "shooting": _COMMON_SHOOTING, "register": _COMMON_REGISTER, "style_prefix": "WH", "vname": "whoau", "shoot_suffix": "shooting"},
     "클라비스": {"src": "clavis", "handover": _COMMON_HANDOVER, "shooting": _COMMON_SHOOTING, "register": _COMMON_REGISTER, "style_prefix": "CV", "vname": "clavis", "shoot_suffix": "shooting", "override_register_style_count": 103, "override_register_avg_days": 1.3, "hide_undist": True},
     "미쏘": {"src": "mixxo", "handover": _COMMON_HANDOVER, "shooting": _COMMON_SHOOTING, "register": _COMMON_REGISTER, "style_prefix": "MI", "vname": "mixxo", "shoot_suffix": "shooting", "override_register_style_count": 392, "override_register_avg_days": 4.1, "hide_undist": True},
