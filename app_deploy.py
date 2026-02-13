@@ -662,21 +662,46 @@ brand_col_base = "브랜드" if "브랜드" in df_base.columns else None
 if selected_brand and selected_brand != "브랜드 전체" and brand_col_base:
     df_base = df_base[df_base[brand_col_base].astype(str).str.strip() == selected_brand].copy()
 
-if selected_brand and selected_brand != "브랜드 전체":
-    total_in_sty = inout_agg.get("brand_in_qty", {}).get(selected_brand, 0)
-    total_out_sty = inout_agg.get("brand_out_qty", {}).get(selected_brand, 0)
-    total_sale_sty = inout_agg.get("brand_sale_qty", {}).get(selected_brand, 0)
-else:
-    total_in_sty = sum(inout_agg.get("brand_in_qty", {}).values())
-    total_out_sty = sum(inout_agg.get("brand_out_qty", {}).values())
-    total_sale_sty = sum(inout_agg.get("brand_sale_qty", {}).values())
+# KPI용: 시즌 필터 적용 (선택 시즌만 반영)
+df_kpi = df_base.copy()
+season_col = find_col(["시즌", "season"], df=df_base)
+if selected_seasons and set(selected_seasons) != set(seasons) and season_col and season_col in df_base.columns:
+    df_kpi = df_base[df_base[season_col].astype(str).str.strip().isin(selected_seasons)].copy()
 
 in_amt_col = find_col(["누적입고액", "입고액"], df=df_base)
 out_amt_col = find_col(["출고액"], df=df_base)
 sale_amt_col = find_col(["누적 판매액[외형매출]", "누적판매액", "판매액"], df=df_base)
-total_in_amt = pd.to_numeric(df_base[in_amt_col], errors="coerce").sum() if in_amt_col and in_amt_col in df_base.columns else 0
-total_out_amt = pd.to_numeric(df_base[out_amt_col], errors="coerce").sum() if out_amt_col and out_amt_col in df_base.columns else 0
-total_sale_amt = pd.to_numeric(df_base[sale_amt_col], errors="coerce").sum() if sale_amt_col and sale_amt_col in df_base.columns else 0
+first_in_col = find_col(["최초입고일", "입고일"], df=df_base)
+style_col = find_col(["스타일코드", "스타일"], df=df_base)
+
+total_in_amt = pd.to_numeric(df_kpi[in_amt_col], errors="coerce").sum() if in_amt_col and in_amt_col in df_kpi.columns else 0
+total_out_amt = pd.to_numeric(df_kpi[out_amt_col], errors="coerce").sum() if out_amt_col and out_amt_col in df_kpi.columns else 0
+total_sale_amt = pd.to_numeric(df_kpi[sale_amt_col], errors="coerce").sum() if sale_amt_col and sale_amt_col in df_kpi.columns else 0
+
+# STY 수: 시즌 필터된 df_kpi 기준 입고/출고/판매 여부로 집계
+if not df_kpi.empty and style_col and style_col in df_kpi.columns:
+    df_kpi = df_kpi.copy()
+    df_kpi["_style"] = df_kpi[style_col].astype(str).str.strip()
+    in_ok = pd.Series(False, index=df_kpi.index)
+    if first_in_col and first_in_col in df_kpi.columns:
+        in_ok = pd.to_datetime(df_kpi[first_in_col], errors="coerce").notna()
+        num = pd.to_numeric(df_kpi[first_in_col], errors="coerce")
+        in_ok = in_ok | num.between(1, 60000, inclusive="both")
+    df_kpi["_in"] = in_ok
+    df_kpi["_out"] = pd.to_numeric(df_kpi[out_amt_col], errors="coerce").fillna(0) > 0 if out_amt_col else False
+    df_kpi["_sale"] = pd.to_numeric(df_kpi[sale_amt_col], errors="coerce").fillna(0) > 0 if sale_amt_col else False
+    total_in_sty = df_kpi[df_kpi["_in"]]["_style"].nunique()
+    total_out_sty = df_kpi[df_kpi["_out"]]["_style"].nunique()
+    total_sale_sty = df_kpi[df_kpi["_sale"]]["_style"].nunique()
+else:
+    if selected_brand and selected_brand != "브랜드 전체":
+        total_in_sty = inout_agg.get("brand_in_qty", {}).get(selected_brand, 0)
+        total_out_sty = inout_agg.get("brand_out_qty", {}).get(selected_brand, 0)
+        total_sale_sty = inout_agg.get("brand_sale_qty", {}).get(selected_brand, 0)
+    else:
+        total_in_sty = sum(inout_agg.get("brand_in_qty", {}).values())
+        total_out_sty = sum(inout_agg.get("brand_out_qty", {}).values())
+        total_sale_sty = sum(inout_agg.get("brand_sale_qty", {}).values())
 
 def _eok(x):
     try:
