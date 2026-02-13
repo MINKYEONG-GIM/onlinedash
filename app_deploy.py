@@ -754,11 +754,19 @@ st.caption("브랜드 옆 화살표를 누르면 시즌별 상세를 볼 수 있
 tree_df = build_tree_df(brand_season_df, [r["브랜드"] for r in inout_rows])
 gb = GridOptionsBuilder.from_dataframe(tree_df)
 gb.configure_column("path", hide=True, width=0)
+# 금액 컬럼: 원 → "N,XXX억 원"
+eok_fmt = JsCode("function(params) { if (params.value == null) return ''; var v = Number(params.value)/1e8; return v.toLocaleString('ko-KR') + '억 원'; }")
+for col in ["발주액", "입고액", "출고액", "판매액"]:
+    gb.configure_column(col, valueFormatter=eok_fmt)
 get_data_path_js = JsCode("function(params) { var p = params.data.path; return typeof p === 'string' ? p.split('|') : (p || []); }")
 gb.configure_grid_options(
     treeData=True,
     getDataPath=get_data_path_js,
-    autoGroupColumnDef={"headerName": "브랜드", "cellRendererParams": {"suppressCount": True}},
+    autoGroupColumnDef={
+        "headerName": "브랜드",
+        "minWidth": 180,
+        "cellRendererParams": {"suppressCount": True, "innerRenderer": None},
+    },
     groupDefaultExpanded=0,
 )
 AgGrid(tree_df, grid_options=gb.build(), allow_unsafe_jscode=True, fit_columns_on_grid_load=True, height=500)
