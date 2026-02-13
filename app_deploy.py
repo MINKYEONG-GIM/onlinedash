@@ -569,12 +569,24 @@ if selected_seasons and set(selected_seasons) != set(seasons):
 if selected_brand and selected_brand != "브랜드 전체":
     df_style = df_style[df_style["브랜드"] == selected_brand]
 
-# KPI 카드 (BASE 기준 집계)
+# KPI 카드 (BASE 기준 집계, 필터 선택 브랜드 반영)
 inout_rows, inout_agg = build_inout_aggregates(base_bytes)
-total_in_sty = sum(inout_agg.get("brand_in_qty", {}).values())
-total_out_sty = sum(inout_agg.get("brand_out_qty", {}).values())
-total_sale_sty = sum(inout_agg.get("brand_sale_qty", {}).values())
 df_base = load_base_inout(base_bytes, _cache_key="base")
+
+# 브랜드 필터 적용: 특정 브랜드 선택 시 해당 브랜드만 KPI에 반영
+brand_col_base = "브랜드" if "브랜드" in df_base.columns else None
+if selected_brand and selected_brand != "브랜드 전체" and brand_col_base:
+    df_base = df_base[df_base[brand_col_base].astype(str).str.strip() == selected_brand].copy()
+
+if selected_brand and selected_brand != "브랜드 전체":
+    total_in_sty = inout_agg.get("brand_in_qty", {}).get(selected_brand, 0)
+    total_out_sty = inout_agg.get("brand_out_qty", {}).get(selected_brand, 0)
+    total_sale_sty = inout_agg.get("brand_sale_qty", {}).get(selected_brand, 0)
+else:
+    total_in_sty = sum(inout_agg.get("brand_in_qty", {}).values())
+    total_out_sty = sum(inout_agg.get("brand_out_qty", {}).values())
+    total_sale_sty = sum(inout_agg.get("brand_sale_qty", {}).values())
+
 in_amt_col = find_col(["누적입고액", "입고액"], df=df_base)
 out_amt_col = find_col(["출고액"], df=df_base)
 # 판매액 컬럼 (외형매출 기준)
@@ -611,7 +623,7 @@ def _eok(x):
         return "0"
 st.markdown("<div style='margin-top:1rem;'></div>", unsafe_allow_html=True)
 
-k1, k2, k3, k4, k5 = st.columns(5)
+k1, k2, k3, k_right = st.columns([1, 1, 1, 1])
 
 with k1:
     st.markdown(
@@ -634,14 +646,12 @@ with k3:
         unsafe_allow_html=True
     )
 
-with k4:
+with k_right:
     st.markdown(
-        f'<div class="kpi-card-dark"><span class="label">온라인 판매</span>'
+        f'<div class="kpi-card-dark" style="margin-bottom:0.5rem;"><span class="label">온라인 판매</span>'
         f'<span class="value">{_eok(online_sale_amt)} 억원</span></div>',
         unsafe_allow_html=True
     )
-
-with k5:
     st.markdown(
         f'<div class="kpi-card-dark"><span class="label">오프라인 판매</span>'
         f'<span class="value">{_eok(offline_sale_amt)} 억원</span></div>',
