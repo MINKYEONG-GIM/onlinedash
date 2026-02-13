@@ -412,7 +412,8 @@ def _col_letter(n):
 
 def _norm_season_value(val):
     """시트 시즌 셀 값을 필터 옵션과 비교할 수 있게 정규화.
-    예: '2시즌', '시즌2' -> '2'. 'g2', 'G2'처럼 접두어+시즌 형태면 2번째 글자를 시즌으로 사용 (g2 -> '2')."""
+    예: '2시즌', '시즌2' -> '2'. 'g2', 'G2'처럼 접두어+시즌 형태면 2번째 글자만 시즌으로 사용 (g2 -> '2').
+    '12', '22' 등 숫자 두 자리는 첫 글자만 사용하여 '12'->'1', '2'->'2' 로 구분."""
     if val is None or pd.isna(val):
         return ""
     # Excel에서 숫자(2, 2.0)로 읽힌 경우: "2"로 통일
@@ -424,9 +425,10 @@ def _norm_season_value(val):
         return s[0] if s[0] != "-" else (s[1] if len(s) > 2 else "")
     if not s:
         return ""
-    # 시즌이 두 번째 글자인 경우(g2, g1, gA 등): 2번째 텍스트가 시즌 코드
-    if len(s) >= 2:
+    # g2, G2, gA 등 접두어(영문)+시즌 한 글자: 2번째 글자만 시즌으로 사용
+    if len(s) >= 2 and s[0].isalpha():
         return s[1]
+    # 그 외(숫자로 시작하는 "12", "2" 등)는 첫 글자만 시즌으로 사용
     return s[0]
 
 def _season_filter_mask(series, selected_seasons):
@@ -538,6 +540,9 @@ def load_brand_registered_style_count(io_bytes=None, _cache_key=None, _cache_suf
                             break
                 if season_col is not None:
                     break
+        # 시즌 필터 선택 시 시즌 열이 없는 시트는 사용하지 않음 (필터 미적용 전체 합계 방지)
+        if selected_seasons and season_col is None:
+            continue
         if style_col is None or register_col is None:
             continue
 
