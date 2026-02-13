@@ -202,7 +202,7 @@ def load_base_inout(io_bytes=None, _cache_key=None):
     return df
 
 # =====================================================
-# 브랜드별 등록 시트 로드 (스타일코드, 시즌, 공홈등록여부)
+# 브랜드별 등록 시트 로드 (스타일코드, 시즌, 공홈등록일 → 온라인상품등록여부)
 # =====================================================
 def _normalize(v):
     return "".join(str(v).split()) if v is not None else ""
@@ -211,45 +211,68 @@ def _normalize(v):
 def load_brand_register_df(io_bytes=None, _cache_key=None):
     if io_bytes is None or len(io_bytes) == 0:
         return pd.DataFrame()
+
     try:
         excel_file = pd.ExcelFile(BytesIO(io_bytes))
     except Exception:
         return pd.DataFrame()
+
     for sheet_name in excel_file.sheet_names:
         try:
             df_raw = pd.read_excel(BytesIO(io_bytes), sheet_name=sheet_name, header=None)
         except Exception:
             continue
+
         if df_raw is None or df_raw.empty:
             continue
+
         header_row_idx, header_vals = None, None
+
         for i in range(min(30, len(df_raw))):
             row = df_raw.iloc[i].tolist()
             norm = [_normalize(v) for v in row]
-            if any("스타일코드" in v for v in norm) and (any("공홈등록일" in v for v in norm) or any("시즌" in v for v in norm) or any("공홈등록여부" in v for v in norm)):
+            if any("스타일코드" in v for v in norm) and any("공홈등록일" in v for v in norm):
                 header_row_idx, header_vals = i, norm
                 break
+
         if header_row_idx is None:
             continue
+
         def fi(key):
             for idx, v in enumerate(header_vals):
                 if key in v:
                     return idx
             return None
+
         style_col = fi("스타일코드") or fi("스타일")
         season_col = fi("시즌") or fi("Season")
-        status_col = fi("공홈등록여부") or fi("등록여부")
-        if style_col is None:
+        regdate_col = fi("공홈등록일")
+
+        if style_col is None or regdate_col is None:
             continue
+
         data = df_raw.iloc[header_row_idx + 1 :].copy()
         data.columns = range(data.shape[1])
+
         out = pd.DataFrame()
         out["스타일코드"] = data.iloc[:, style_col].astype(str).str.strip()
-        out["시즌"] = data.iloc[:, season_col].astype(str).str.strip() if season_col is not None and season_col < data.shape[1] else ""
-        out["공홈등록여부"] = data.iloc[:, status_col].astype(str).str.strip() if status_col is not None and status_col < data.shape[1] else ""
+        out["시즌"] = (
+            data.iloc[:, season_col].astype(str).str.strip()
+            if season_col is not None and season_col < data.shape[1]
+            else ""
+        )
+
+        # 핵심: 공홈등록일 기준으로 등록여부 생성
+        reg_series = data.iloc[:, regdate_col]
+        reg_ok = pd.to_datetime(reg_series, errors="coerce").notna()
+
+        out["온라인상품등록여부"] = reg_ok.map({True: "등록", False: "미등록"})
+
         out = out[out["스타일코드"].str.len() > 0]
         out = out[out["스타일코드"] != "nan"]
+
         return out
+
     return pd.DataFrame()
 
 # =====================================================
@@ -317,13 +340,16 @@ def build_style_table_all(sources):
             continue
         df_reg["스타일코드_norm"] = df_reg["스타일코드"].str.strip()
         merged = b_agg.merge(
-            df_reg[["스타일코드_norm", "공홈등록여부"]],
+            df_reg[["스타일코드_norm", "온라인상품등록여부"]],
             left_on="스타일코드",
             right_on="스타일코드_norm",
             how="left",
         )
         for _, r in merged.iterrows():
-            reg = "등록" if str(r.get("공홈등록여부", "")).strip().upper() == "등록" else "미등록"
+            reg = r.get("온라인상품등록여부", "미등록")
+            if pd.isna(reg) or str(reg).strip() == "":
+                reg = "미등록"
+
             rows.append({
                 "브랜드": brand_name,
                 "스타일코드": r["스타일코드"],
@@ -572,9 +598,7 @@ with k3:
 # 브랜드별 상품등록 모니터링
 st.markdown("<div style='margin-top:80px;'></div>", unsafe_allow_html=True)
 st.markdown("---")
-title_col, download_col = st.columns([8, 2])
-with title_col:
-    st.markdown('<div class="section-title">브랜드별 상품등록 모니터링</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-title">브랜드별 상품등록 모니터링</div>', unsafe_allow_html=True)
 
 # 모니터 집계 테이블 (BU + 브랜드)
 style_count_b = df_style.groupby("브랜드")["스타일코드"].nunique()
@@ -621,25 +645,6 @@ st.markdown(f"""
 </table>
 </div>
 """, unsafe_allow_html=True)
-with download_col:
-    st.download_button(
-        label="CSV 다운로드",
-        data=monitor_df.to_csv(index=False, encoding="utf-8-sig"),
-        file_name=f"브랜드별_상품등록_모니터링_{update_time.strftime('%Y%m%d_%H%M')}.csv",
-        mime="text/csv",
-        key="dl_monitor",
-    )
-
-# 스타일별 상세 (실시간 입고/출고/온라인등록)
-st.markdown('<div class="section-title" style="margin-top:2rem;">스타일별 입고 · 출고 · 온라인등록 현황</div>', unsafe_allow_html=True)
-st.dataframe(df_style, use_container_width=True, hide_index=True)
-st.download_button(
-    "스타일 현황 CSV",
-    df_style.to_csv(index=False, encoding="utf-8-sig"),
-    file_name=f"스타일별_현황_{update_time.strftime('%Y%m%d_%H%M')}.csv",
-    mime="text/csv",
-    key="dl_style",
-)
 
 # 브랜드별 입출고 모니터링
 st.markdown('<div style="height:40px;"></div>', unsafe_allow_html=True)
@@ -660,10 +665,3 @@ st.markdown(f"""
 </table>
 </div>
 """, unsafe_allow_html=True)
-st.download_button(
-    label="CSV 다운로드",
-    data=inout_df.to_csv(index=False, encoding="utf-8-sig"),
-    file_name=f"브랜드별_입출고_모니터링_{update_time.strftime('%Y%m%d_%H%M')}.csv",
-    mime="text/csv",
-    key="dl_inout",
-)
