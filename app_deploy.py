@@ -549,7 +549,15 @@ def load_brand_registered_style_count(io_bytes=None, _cache_key=None, _cache_suf
         register_status_col = find_col("공홈등록여부") or find_col("등록여부") or (
             next((idx for idx, v in enumerate(header_vals) if "등록" in v and "여부" in v), None)
         )
-        season_col = find_col("시즌") or find_col_exact("시즌") or find_col("Season") or find_col("season")
+        # 시즌 열: 정확히 "시즌"인 헤더 우선, 없으면 포함 검색 (Season 등)
+        season_col = find_col_exact("시즌") or find_col("시즌")
+        if season_col is None and "시즌" in header_vals:
+            try:
+                season_col = header_vals.index("시즌")
+            except ValueError:
+                season_col = next((i for i, v in enumerate(header_vals) if v == "시즌"), None)
+        if season_col is None:
+            season_col = find_col("Season") or find_col("season")
         # 시즌이 다른 행에 있으면 상단 몇 행에서 해당 열 찾기 (selected_seasons 있을 때만)
         if selected_seasons and season_col is None and df_raw.shape[1] > 0:
             for row_i in range(min(header_row_idx + 1, len(df_raw))):
@@ -573,8 +581,15 @@ def load_brand_registered_style_count(io_bytes=None, _cache_key=None, _cache_suf
         if selected_seasons and season_col is not None and season_col < data.shape[1]:
             norm_selected = [_norm_season_value(s) for s in selected_seasons]
             mask = _season_filter_mask(data.iloc[:, season_col], norm_selected)
-            # 디버그: 시즌 열 인식/필터 확인 (138 안 나올 때 아래 주석 해제)
-            # print(f"[등록스타일수] 시트={sheet_name!r} 총 {len(data)}행 중 시즌 필터 적용 후 {mask.sum()}행 남음, norm_selected={norm_selected}")
+            # SP + 시즌 2: G2/g2/2만 허용 (연도·기타 2 포함 값 제외)
+            if style_prefix and style_prefix.upper() == "SP" and norm_selected == ["2"]:
+                season_raw = data.iloc[:, season_col].astype(str).str.strip().str.upper()
+                mask = mask & season_raw.str.match(r"^G?2$", na=False)
+            # 디버그: 필터 적용 후 남는 행 수 확인
+            try:
+                print(f"[등록스타일수] 시트={sheet_name!r} 총 {len(data)}행 중 시즌 필터 적용 후 {mask.sum()}행 남음, norm_selected={norm_selected}")
+            except Exception:
+                pass
             data = data.loc[mask]
 
         # 공홈등록일 존재 체크 (0, '0', '0.0', 빈값 제외)
