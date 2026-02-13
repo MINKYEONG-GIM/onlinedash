@@ -673,32 +673,21 @@ st.markdown("<div style='margin-top:80px;'></div>", unsafe_allow_html=True)
 st.markdown("---")
 st.markdown('<div class="section-title">브랜드별 상품등록 모니터링</div>', unsafe_allow_html=True)
 
-# 모니터 집계 테이블 (BU + 브랜드)
-style_count_b = df_style.groupby("브랜드")["스타일코드"].nunique()
-in_count_b = df_style[df_style["입고 여부"] == "Y"].groupby("브랜드")["스타일코드"].nunique()
-reg_count_b = df_style[df_style["온라인상품등록여부"] == "등록"].groupby("브랜드")["스타일코드"].nunique()
+# 표 전용 (필터 무시, 전체 브랜드)
+df_style_unique = df_style_all.drop_duplicates(subset=["브랜드", "시즌", "스타일코드"])
+style_count_all = df_style_unique.groupby("브랜드")["스타일코드"].nunique()
+in_count_all = df_style_unique[df_style_unique["입고 여부"] == "Y"].groupby("브랜드")["스타일코드"].nunique()
+reg_count_all = df_style_unique[df_style_unique["온라인상품등록여부"] == "등록"].groupby("브랜드")["스타일코드"].nunique()
+all_brands = sorted(df_style_unique["브랜드"].unique())
+table_df = pd.DataFrame({"브랜드": all_brands})
+table_df["입고스타일수"] = table_df["브랜드"].map(in_count_all).fillna(0).astype(int)
+table_df["온라인등록스타일수"] = table_df["브랜드"].map(reg_count_all).fillna(0).astype(int)
+table_df["온라인등록율"] = (table_df["온라인등록스타일수"] / table_df["입고스타일수"].replace(0, 1)).round(2)
+table_df["전체 미등록스타일"] = table_df["입고스타일수"] - table_df["온라인등록스타일수"]
 bu_labels = {label for label, _ in bu_groups}
-monitor_rows = []
-for bu_label, bu_brands in bu_groups:
-    monitor_rows.append({
-        "브랜드": bu_label,
-        "입고스타일수": f"{sum(in_count_b.get(b, 0) for b in bu_brands):,}",
-        "온라인등록 스타일수": f"{sum(reg_count_b.get(b, 0) for b in bu_brands):,}",
-        "온라인 등록율": f"{int(sum(reg_count_b.get(b, 0) for b in bu_brands) / max(sum(style_count_b.get(b, 0) for b in bu_brands), 1) * 100)}%" if bu_brands else "0%",
-        "전체 미등록 스타일": f"{max(sum(style_count_b.get(b, 0) for b in bu_brands) - sum(reg_count_b.get(b, 0) for b in bu_brands), 0):,}",
-    })
-    for b in bu_brands:
-        sc = style_count_b.get(b, 0)
-        rc = reg_count_b.get(b, 0)
-        ic = in_count_b.get(b, 0)
-        monitor_rows.append({
-            "브랜드": b,
-            "입고스타일수": f"{ic:,}",
-            "온라인등록 스타일수": f"{rc:,}",
-            "온라인 등록율": f"{int(rc / max(sc, 1) * 100)}%",
-            "전체 미등록 스타일": f"{max(sc - rc, 0):,}",
-        })
-monitor_df = pd.DataFrame(monitor_rows)
+monitor_df = table_df.copy()
+monitor_df["_등록율"] = (monitor_df["온라인등록율"] * 100).astype(int).astype(str) + "%"
+monitor_df["_미등록"] = monitor_df["전체 미등록스타일"].astype(int)
 
 def safe_cell(v):
     s = html_lib.escape(str(v)) if v is not None and str(v) != "nan" else ""
@@ -706,8 +695,11 @@ def safe_cell(v):
 header_monitor = (
     "<tr><th>브랜드</th><th>입고스타일수</th><th>온라인등록<br>스타일수</th><th>온라인<br>등록율</th><th>전체 미등록 스타일</th></tr>"
 )
+def _fmt(n):
+    return f"{int(n):,}"
 body_monitor = "".join(
-    f"<tr class='{'bu-row' if r['브랜드'] in bu_labels else ''}'><td>{safe_cell(r['브랜드'])}</td><td>{safe_cell(r['입고스타일수'])}</td><td>{safe_cell(r['온라인등록 스타일수'])}</td><td>{safe_cell(r['온라인 등록율'])}</td><td>{safe_cell(r['전체 미등록 스타일'])}</td></tr>"
+    ("<tr class='bu-row'>" if r["브랜드"] in bu_labels else "<tr>")
+    + f"<td>{safe_cell(r['브랜드'])}</td><td>{safe_cell(_fmt(r['입고스타일수']))}</td><td>{safe_cell(_fmt(r['온라인등록스타일수']))}</td><td>{safe_cell(r['_등록율'])}</td><td>{safe_cell(_fmt(r['_미등록']))}</td></tr>"
     for _, r in monitor_df.iterrows()
 )
 st.markdown(f"""
