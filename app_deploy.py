@@ -1825,7 +1825,14 @@ def _render_dashboard():
             "미분배(분배팀)",
         ] = "-"
     if "온라인 등록 스타일수" in monitor_df.columns:
-        register_style_counts = {b: BM_monitor[b].get("register_style_count") for b in BM_monitor if BM_monitor[b].get("register_style_count") is not None}
+        # 시즌 필터 결과가 비면 전체 시즌(BM) 값으로 폴백
+        register_style_counts = {}
+        for b in BM_monitor:
+            v = BM_monitor[b].get("register_style_count")
+            if v is None and b in BM:
+                v = BM[b].get("register_style_count")
+            if v is not None:
+                register_style_counts[b] = v
         def has_online_register_data(brand_name):
             if brand_name in bu_labels:
                 brands = next((b for l, b in bu_groups if l == brand_name), [])
@@ -1856,7 +1863,13 @@ def _render_dashboard():
             lambda b: format_monitor_num(resolve_unregistered_total(b))
         )
     if "상품 미등록(온라인)" in monitor_df.columns:
-        unregistered_counts = {b: BM_monitor[b].get("unregistered_count") or 0 for b in BM_monitor}
+        # 시즌 필터 결과가 없으면 전체 시즌(BM) 값으로 폴백
+        unregistered_counts = {}
+        for b in BM_monitor:
+            u = BM_monitor[b].get("unregistered_count")
+            if u is None and b in BM:
+                u = BM[b].get("unregistered_count")
+            unregistered_counts[b] = u if u is not None else 0
         def format_dash_if_no_register(brand_name, value):
             if not has_online_register_data(brand_name):
                 return "-"
@@ -1895,9 +1908,12 @@ def _render_dashboard():
             lambda b: format_dash_if_no_register(b, resolve_photo_missing(b))
         )
     if "평균 등록 소요일수" in monitor_df.columns:
+        # 시즌 필터 결과가 비면 전체 시즌(BM) 값으로 폴백
         avg_days_by_brand = {}
         for b in BM_monitor:
             v = BM_monitor[b].get("register_days") if BM_monitor[b].get("register_days") is not None else BM_monitor[b].get("register_avg_days")
+            if v is None and b in BM:
+                v = BM[b].get("register_days") if BM[b].get("register_days") is not None else BM[b].get("register_avg_days")
             if v is not None:
                 avg_days_by_brand[b] = v
         def resolve_avg_days(brand_name):
