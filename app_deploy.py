@@ -645,10 +645,21 @@ with col_head_right:
         brand_options = ["브랜드 전체"] + brands_list
         selected_brand = st.selectbox("브랜드", brand_options, key="brand_filter", index=0)
 
+def _season_matches(season_series, selected_list):
+    """시즌(Now)이 '2', '2!', '2#', '2!#' 등일 때 '2' 선택 시 모두 포함"""
+    if not selected_list:
+        return pd.Series(True, index=season_series.index)
+    s = season_series.astype(str).str.strip()
+    mask = pd.Series(False, index=season_series.index)
+    for sel in selected_list:
+        sel = str(sel).strip()
+        mask = mask | (s == sel) | (s.str.startswith(sel) & (s.str.len() == len(sel) | ~s.str.slice(len(sel), len(sel) + 1).str.isalnum().fillna(True)))
+    return mask
+
 # 필터 적용
 df_style = df_style_all.copy()
 if selected_seasons and set(selected_seasons) != set(seasons):
-    df_style = df_style[df_style["시즌"].astype(str).str.strip().isin(selected_seasons)]
+    df_style = df_style[_season_matches(df_style["시즌"], selected_seasons)]
 if selected_brand and selected_brand != "브랜드 전체":
     df_style = df_style[df_style["브랜드"] == selected_brand]
 
@@ -665,7 +676,7 @@ if selected_brand and selected_brand != "브랜드 전체" and brand_col_base:
 df_kpi = df_base.copy()
 season_col = find_col(["시즌", "season"], df=df_base)
 if selected_seasons and set(selected_seasons) != set(seasons) and season_col and season_col in df_base.columns:
-    df_kpi = df_base[df_base[season_col].astype(str).str.strip().isin(selected_seasons)].copy()
+    df_kpi = df_base[_season_matches(df_base[season_col], selected_seasons)].copy()
 
 in_amt_col = find_col(["누적입고액", "입고액"], df=df_base)
 out_amt_col = find_col(["출고액"], df=df_base)
@@ -738,7 +749,7 @@ st.markdown('<div class="section-title">브랜드별 상품등록 모니터링</
 all_brands = sorted(df_style_all["브랜드"].unique())
 df_for_table = df_style_all.copy()
 if selected_seasons and set(selected_seasons) != set(seasons):
-    df_for_table = df_for_table[df_for_table["시즌"].astype(str).str.strip().isin(selected_seasons)]
+    df_for_table = df_for_table[_season_matches(df_for_table["시즌"], selected_seasons)]
 df_style_unique = df_for_table.drop_duplicates(subset=["브랜드", "시즌", "스타일코드"])
 in_count_all = df_style_unique[df_style_unique["입고 여부"] == "Y"].groupby("브랜드")["스타일코드"].nunique()
 reg_count_all = df_style_unique[df_style_unique["온라인상품등록여부"] == "등록"].groupby("브랜드")["스타일코드"].nunique()
