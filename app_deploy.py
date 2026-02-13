@@ -1825,11 +1825,11 @@ def _render_dashboard():
             "미분배(분배팀)",
         ] = "-"
     if "온라인 등록 스타일수" in monitor_df.columns:
-        # 시즌 필터 결과가 비면 전체 시즌(BM) 값으로 폴백
+        # 시즌 필터 사용 시: 0/None이면 전체 시즌(BM) 값으로 폴백 (시즌 하나만 제거해도 0으로 나오는 현상 방지)
         register_style_counts = {}
         for b in BM_monitor:
             v = BM_monitor[b].get("register_style_count")
-            if v is None and b in BM:
+            if b in BM and (v is None or (v == 0 and (BM[b].get("register_style_count") or 0) > 0)):
                 v = BM[b].get("register_style_count")
             if v is not None:
                 register_style_counts[b] = v
@@ -1863,7 +1863,7 @@ def _render_dashboard():
             lambda b: format_monitor_num(resolve_unregistered_total(b))
         )
     if "상품 미등록(온라인)" in monitor_df.columns:
-        # 시즌 필터 결과가 없으면 전체 시즌(BM) 값으로 폴백
+        # 시즌 필터 사용 시: None이면 전체 시즌(BM) 값으로 폴백
         unregistered_counts = {}
         for b in BM_monitor:
             u = BM_monitor[b].get("unregistered_count")
@@ -1908,7 +1908,7 @@ def _render_dashboard():
             lambda b: format_dash_if_no_register(b, resolve_photo_missing(b))
         )
     if "평균 등록 소요일수" in monitor_df.columns:
-        # 시즌 필터 결과가 비면 전체 시즌(BM) 값으로 폴백
+        # 시즌 필터 사용 시: None이면 전체 시즌(BM) 값으로 폴백
         avg_days_by_brand = {}
         for b in BM_monitor:
             v = BM_monitor[b].get("register_days") if BM_monitor[b].get("register_days") is not None else BM_monitor[b].get("register_avg_days")
