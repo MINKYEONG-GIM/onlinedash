@@ -335,11 +335,22 @@ def build_style_table_all(sources):
     df_base["_입고"] = in_date_ok | has_qty | has_amt
     out_vals = df_base[out_amt_col] if out_amt_col and out_amt_col in df_base.columns else pd.Series(0, index=df_base.index)
     df_base["_출고"] = pd.to_numeric(out_vals, errors="coerce").fillna(0) > 0
-    base_agg = df_base.groupby(["_brand", "_style"]).agg(
-        _season=("_season", lambda s: s.dropna().astype(str).str.strip().iloc[0] if len(s.dropna()) else ""),
-        입고여부=("_입고", "any"), 출고여부=("_출고", "any"),
-    ).reset_index()
-    base_agg = base_agg.rename(columns={"_brand": "브랜드", "_style": "스타일코드", "_season": "시즌"})
+
+    def pick_season(s, in_flag):
+        s2 = s[in_flag]
+        s2 = s2.dropna().astype(str).str.strip()
+        return s2.iloc[0] if len(s2) else ""
+
+    base_agg = (
+        df_base.groupby(["_brand", "_style"])
+        .apply(lambda g: pd.Series({
+            "시즌": pick_season(g["_season"], g["_입고"]),
+            "입고여부": g["_입고"].any(),
+            "출고여부": g["_출고"].any(),
+        }))
+        .reset_index()
+    )
+    base_agg = base_agg.rename(columns={"_brand": "브랜드", "_style": "스타일코드"})
     rows = []
     for brand_name in base_agg["브랜드"].dropna().unique().tolist():
         b_agg = base_agg[base_agg["브랜드"] == brand_name]
