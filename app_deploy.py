@@ -562,7 +562,7 @@ for col, label, amt, sty in [(k1, "입고", total_in_amt, total_in_sty), (k2, "�
 
 st.markdown("<div style='margin-top:80px;'></div>", unsafe_allow_html=True)
 st.markdown("---")
-st.markdown('<div class="section-title">브랜드별 상품등록 모니터링</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-title">(온라인) 상품등록 모니터링</div>', unsafe_allow_html=True)
 
 df_for_table = df_style_all.copy()
 if selected_seasons and set(selected_seasons) != set(seasons):
@@ -720,7 +720,7 @@ def _build_inout_table_html(display_df):
     return html, len(body_rows)
 
 st.markdown('<div style="height:40px;"></div>', unsafe_allow_html=True)
-st.markdown('<div class="section-title">브랜드별 입출고 모니터링</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-title">(온/오프 전체) 입출고 현황</div>', unsafe_allow_html=True)
 st.markdown('<div style="font-size:1.1rem;color:#cbd5e1;margin-bottom:0.5rem;">STY 기준 통계</div>', unsafe_allow_html=True)
 display_df = pd.DataFrame(inout_rows)[["브랜드"] + TABLE_COLS]
 st.caption("브랜드명을 클릭하면 시즌별 수치를 보실 수 있습니다")
