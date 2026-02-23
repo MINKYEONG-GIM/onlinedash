@@ -316,6 +316,8 @@ def build_style_table_all(sources):
     season_col = find_col(["시즌", "season"], df=df_base)
     first_in_col = find_col(["최초입고일", "입고일"], df=df_base)
     out_amt_col = find_col(["출고액"], df=df_base)
+    in_qty_col = find_col(["입고량"], df=df_base)
+    in_amt_col = find_col(["누적입고액", "입고액"], df=df_base)
     if not style_col or not brand_col:
         return pd.DataFrame()
     df_base = df_base[df_base[style_col].astype(str).str.strip().str.len() > 0].copy()
@@ -323,10 +325,14 @@ def build_style_table_all(sources):
     df_base["_brand"] = df_base[brand_col].astype(str).str.strip()
     df_base["_season"] = df_base[season_col].astype(str).str.strip() if season_col and season_col in df_base.columns else ""
     first_vals = df_base[first_in_col] if first_in_col and first_in_col in df_base.columns else pd.Series(dtype=object)
-    df_base["_입고"] = pd.to_datetime(first_vals, errors="coerce").notna()
+    in_date = pd.to_datetime(first_vals, errors="coerce")
+    in_date_ok = in_date.notna()
     if first_in_col and first_in_col in df_base.columns:
         num = pd.to_numeric(df_base[first_in_col], errors="coerce")
-        df_base.loc[num.between(1, 60000, inclusive="both"), "_입고"] = True
+        in_date_ok = in_date_ok | num.between(1, 60000, inclusive="both")
+    has_qty = pd.to_numeric(df_base[in_qty_col], errors="coerce").fillna(0) > 0 if in_qty_col and in_qty_col in df_base.columns else pd.Series(False, index=df_base.index)
+    has_amt = pd.to_numeric(df_base[in_amt_col], errors="coerce").fillna(0) > 0 if in_amt_col and in_amt_col in df_base.columns else pd.Series(False, index=df_base.index)
+    df_base["_입고"] = in_date_ok | has_qty | has_amt
     out_vals = df_base[out_amt_col] if out_amt_col and out_amt_col in df_base.columns else pd.Series(0, index=df_base.index)
     df_base["_출고"] = pd.to_numeric(out_vals, errors="coerce").fillna(0) > 0
     base_agg = df_base.groupby(["_brand", "_style"]).agg(
@@ -368,17 +374,21 @@ def build_inout_aggregates(io_bytes):
     out_amt_col = find_col(["출고액"], df=df)
     sale_amt_col = find_col(["누적판매액", "판매액"], df=df)
     first_in_col = find_col(["최초입고일", "입고일"], df=df)
+    in_qty_col = find_col(["입고량"], df=df)
     if not style_col or not brand_col:
         return [], {}, pd.DataFrame()
     season_col = find_col(["시즌", "season"], df=df)
     df["_style"] = df[style_col].astype(str).str.strip()
     df["_brand"] = df[brand_col].astype(str).str.strip()
     df["_season"] = df[season_col].astype(str).str.strip() if season_col and season_col in df.columns else ""
-    in_ok = pd.to_datetime(df[first_in_col], errors="coerce").notna() if first_in_col else pd.Series(False, index=df.index)
-    if first_in_col:
+    in_date = pd.to_datetime(df[first_in_col], errors="coerce") if first_in_col and first_in_col in df.columns else pd.Series(pd.NaT, index=df.index)
+    in_date_ok = in_date.notna()
+    if first_in_col and first_in_col in df.columns:
         num = pd.to_numeric(df[first_in_col], errors="coerce")
-        in_ok = in_ok | num.between(1, 60000, inclusive="both")
-    df["_in"] = in_ok
+        in_date_ok = in_date_ok | num.between(1, 60000, inclusive="both")
+    has_qty = pd.to_numeric(df[in_qty_col], errors="coerce").fillna(0) > 0 if in_qty_col and in_qty_col in df.columns else pd.Series(False, index=df.index)
+    has_amt = pd.to_numeric(df[in_amt_col], errors="coerce").fillna(0) > 0 if in_amt_col and in_amt_col in df.columns else pd.Series(False, index=df.index)
+    df["_in"] = in_date_ok | has_qty | has_amt
     df["_out"] = pd.to_numeric(df[out_amt_col], errors="coerce").fillna(0) > 0 if out_amt_col else False
     df["_sale"] = pd.to_numeric(df[sale_amt_col], errors="coerce").fillna(0) > 0 if sale_amt_col else False
 
@@ -494,6 +504,7 @@ in_amt_col = find_col(["누적입고액", "입고액"], df=df_base)
 out_amt_col = find_col(["출고액"], df=df_base)
 sale_amt_col = find_col(["누적 판매액[외형매출]", "누적판매액", "판매액"], df=df_base)
 first_in_col = find_col(["최초입고일", "입고일"], df=df_base)
+in_qty_col = find_col(["입고량"], df=df_base)
 style_col = find_col(["스타일코드", "스타일"], df=df_base)
 total_in_amt = pd.to_numeric(df_kpi[in_amt_col], errors="coerce").sum() if in_amt_col and in_amt_col in df_kpi.columns else 0
 total_out_amt = pd.to_numeric(df_kpi[out_amt_col], errors="coerce").sum() if out_amt_col and out_amt_col in df_kpi.columns else 0
@@ -502,11 +513,15 @@ total_sale_amt = pd.to_numeric(df_kpi[sale_amt_col], errors="coerce").sum() if s
 if not df_kpi.empty and style_col and style_col in df_kpi.columns:
     df_kpi = df_kpi.copy()
     df_kpi["_style"] = df_kpi[style_col].astype(str).str.strip()
-    in_ok = pd.to_datetime(df_kpi[first_in_col], errors="coerce").notna() if first_in_col and first_in_col in df_kpi.columns else pd.Series(False, index=df_kpi.index)
+    first_vals_kpi = df_kpi[first_in_col] if first_in_col and first_in_col in df_kpi.columns else pd.Series(dtype=object)
+    in_date = pd.to_datetime(first_vals_kpi, errors="coerce")
+    in_date_ok = in_date.notna()
     if first_in_col and first_in_col in df_kpi.columns:
         num = pd.to_numeric(df_kpi[first_in_col], errors="coerce")
-        in_ok = in_ok | num.between(1, 60000, inclusive="both")
-    df_kpi["_in"] = in_ok
+        in_date_ok = in_date_ok | num.between(1, 60000, inclusive="both")
+    has_qty = pd.to_numeric(df_kpi[in_qty_col], errors="coerce").fillna(0) > 0 if in_qty_col and in_qty_col in df_kpi.columns else pd.Series(False, index=df_kpi.index)
+    has_amt = pd.to_numeric(df_kpi[in_amt_col], errors="coerce").fillna(0) > 0 if in_amt_col and in_amt_col in df_kpi.columns else pd.Series(False, index=df_kpi.index)
+    df_kpi["_in"] = in_date_ok | has_qty | has_amt
     df_kpi["_out"] = pd.to_numeric(df_kpi[out_amt_col], errors="coerce").fillna(0) > 0 if out_amt_col else False
     df_kpi["_sale"] = pd.to_numeric(df_kpi[sale_amt_col], errors="coerce").fillna(0) > 0 if sale_amt_col else False
     total_in_sty = df_kpi[df_kpi["_in"]]["_style"].nunique()
