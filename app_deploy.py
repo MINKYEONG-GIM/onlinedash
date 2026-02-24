@@ -10,7 +10,7 @@ from io import BytesIO
 from datetime import datetime
 from google.oauth2.service_account import Credentials
 
-st.set_page_config(page_title="브랜드별 스타일 모니터링", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="전 브랜드 스타일 모니터링", layout="wide", initial_sidebar_state="expanded")
 
 # ---- 비밀번호 인증 (처음 접속 시) ----
 def _get_expected_password():
