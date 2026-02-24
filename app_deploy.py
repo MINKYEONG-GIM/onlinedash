@@ -12,6 +12,31 @@ from google.oauth2.service_account import Credentials
 
 st.set_page_config(page_title="브랜드별 스타일 모니터링", layout="wide", initial_sidebar_state="expanded")
 
+# ---- 비밀번호 인증 (처음 접속 시) ----
+def _get_expected_password():
+    return _secret("DASHBOARD_PASSWORD") or os.environ.get("DASHBOARD_PASSWORD", "").strip()
+
+def _check_auth():
+    if "authenticated" not in st.session_state:
+        st.session_state.authenticated = False
+    expected = _get_expected_password()
+    if not expected:
+        st.session_state.authenticated = True
+        return
+    if st.session_state.authenticated:
+        return
+    st.markdown("<div style='max-width:400px;margin:4rem auto;padding:2rem;background:#1e293b;border-radius:12px;border:1px solid #334155;'>", unsafe_allow_html=True)
+    st.markdown("### 🔐 비밀번호를 입력하세요")
+    pw = st.text_input("비밀번호", type="password", key="auth_password", placeholder="비밀번호 입력")
+    if st.button("입장", key="auth_submit"):
+        if pw.strip() == expected:
+            st.session_state.authenticated = True
+            st.rerun()
+        else:
+            st.error("비밀번호가 올바르지 않습니다.")
+    st.markdown("</div>", unsafe_allow_html=True)
+    st.stop()
+
 # ---- 설정 ----
 def _secret(key, default=""):
     try:
@@ -465,6 +490,31 @@ DARK_CSS = """<style>
 </style>"""
 
 # ---- UI ----
+# =========================================
+# 비밀번호 보호 (Streamlit Secrets 사용)
+# =========================================
+if "is_authed" not in st.session_state:
+    st.session_state.is_authed = False
+
+app_password = st.secrets.get("app_password", "")
+
+if not app_password:
+    st.error("❌ 앱 비밀번호가 설정되어 있지 않습니다. Streamlit Secrets에 `app_password`를 추가하세요.")
+    st.stop()
+
+if not st.session_state.is_authed:
+    st.title("오늘의 비밀번호는 무엇일까요? 🫒🫛")
+    with st.form("password_form", clear_on_submit=False):
+        input_pw = st.text_input("👻힌트는 콩과 밍에 관련있는 정보!", type="password")
+        submitted = st.form_submit_button("접속🚀")
+    if submitted:
+        if input_pw == app_password:
+            st.session_state.is_authed = True
+            st.rerun()
+        else:
+            st.error("틀렸어요 😱 관계자외 출입금지")
+    st.stop()
+
 update_time = datetime.now()
 sources = get_all_sources()
 base_bytes = sources.get("inout", (None, None))[0]
