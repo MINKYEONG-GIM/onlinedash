@@ -507,15 +507,14 @@ if not st.session_state.is_authed:
     st.markdown(
         """
         <style>
-        /* 전체 배경 어두움 - 최상위까지 지정해서 흰색 덮기 */
+        /* 전체 배경 어두움 */
         [data-testid="stAppViewContainer"],
         [data-testid="stAppViewContainer"] main,
         .stApp,
         .stApp .block-container,
         .block-container {
             background-color: #0f172a !important;
-            background: #0f172a !important;
-            color: #f1f5f9;
+            color: #f1f5f9 !important;
         }
 
         /* 비밀번호 박스 중앙 정렬 */
@@ -523,10 +522,10 @@ if not st.session_state.is_authed:
             display: flex;
             justify-content: center;
             align-items: center;
-            height: 80vh; /* 화면 거의 중앙 */
+            height: 80vh; /* 화면 중앙 */
         }
 
-        /* 비밀번호 카드 스타일 (iOS 느낌) */
+        /* 카드형 디자인 (iOS 느낌) */
         .pw-card {
             background: #1e293b;
             border-radius: 20px;
@@ -548,12 +547,11 @@ if not st.session_state.is_authed:
             width: 100%;
             padding: 0.6rem 0.8rem;
             border-radius: 12px;
-            border: none;
+            border: 1px solid #334155;
             margin-bottom: 1rem;
             font-size: 1rem;
             background: #0f172a;
             color: #f1f5f9;
-            border: 1px solid #334155;
         }
 
         .pw-card button {
@@ -582,7 +580,7 @@ if not st.session_state.is_authed:
     )
 
     st.markdown('<div class="pw-container"><div class="pw-card">', unsafe_allow_html=True)
-    st.markdown('<h3>🔐 비밀번호를 입력하세요</h3>', unsafe_allow_html=True)
+    st.markdown('<h3>🔐 비밀번호 입력</h3>', unsafe_allow_html=True)
     with st.form("password_form", clear_on_submit=False):
         input_pw = st.text_input("", type="password", placeholder="비밀번호 입력")
         submitted = st.form_submit_button("접속")
@@ -596,6 +594,12 @@ if not st.session_state.is_authed:
 
     st.markdown("</div></div>", unsafe_allow_html=True)
     st.stop()
+
+
+
+
+
+
 
 update_time = datetime.now()
 sources = get_all_sources()
