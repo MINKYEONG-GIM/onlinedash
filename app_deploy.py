@@ -506,7 +506,7 @@ if not st.session_state.is_authed:
     st.title("온라인 상품흐름 대시보드")
     with st.form("password_form", clear_on_submit=False):
         input_pw = st.text_input("대소문자 구분 후 비밀번호를 입력해주세요", type="password")
-        submitted = st.form_submit_button("인증에 성공하였습니다")
+        submitted = st.form_submit_button("접속")
     if submitted:
         if input_pw == app_password:
             st.session_state.is_authed = True
