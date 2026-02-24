@@ -33,7 +33,7 @@ def _check_auth():
             st.session_state.authenticated = True
             st.rerun()
         else:
-            st.error("비밀번호가 올바르지 않습니다.")
+            st.error("비밀번호가 올바르지 않습니다 문의가 있으시면 kim_minkyeong07@eland.co.kr로 부탁드립니다")
     st.markdown("</div>", unsafe_allow_html=True)
     st.stop()
 
