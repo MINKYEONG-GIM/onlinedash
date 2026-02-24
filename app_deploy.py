@@ -489,6 +489,8 @@ DARK_CSS = """<style>
 [data-testid='stSelectbox'] label,[data-testid='stMultiSelect'] label{color:#f1f5f9!important}
 </style>"""
 
+# 접속 전 비밀번호 확인 (반드시 대시보드 렌더링 전에 호출)
+_check_auth()
 
 update_time = datetime.now()
 sources = get_all_sources()
