@@ -503,22 +503,34 @@ if not app_password:
     st.stop()
 
 if not st.session_state.is_authed:
-    # 본문과 동일 배경(#0f172a) + 화면 한가운데 + iOS 스타일 카드 (비밀번호 화면에만 적용)
+    # 본문과 동일 배경(#0f172a) + 화면 한가운데 + iOS 스타일 (비밀번호 화면에서만 적용)
+    # Streamlit 흰 배경은 최상위 컨테이너에 있으므로 해당 요소들 직접 지정
     st.markdown("""<style>
-    /* 비밀번호 화면 전체 배경 = 본문과 동일 */
-    .block-container:has([data-testid="stFormSubmitButton"]) { background: #0f172a !important; padding: 2rem 1rem !important; max-width: 100% !important; min-height: 85vh !important; display: flex !important; align-items: center !important; justify-content: center !important; }
-    /* 중앙 컬럼을 iOS 스타일 카드로 */
-    .block-container:has([data-testid="stFormSubmitButton"]) > div > div:nth-child(2) { max-width: 400px !important; margin: 0 auto !important; padding: 2.25rem 2rem !important; background: rgba(30, 41, 59, 0.98) !important; border: 1px solid rgba(51, 65, 85, 0.9) !important; border-radius: 20px !important; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.05) !important; }
+    /* 흰 배경 제거: 앱 최상위 래퍼 전부 다크 배경으로 */
+    [data-testid="stAppViewContainer"]:has([data-testid="stFormSubmitButton"]),
+    [data-testid="stAppViewContainer"]:has([data-testid="stFormSubmitButton"]) main,
+    [data-testid="stAppViewContainer"]:has([data-testid="stFormSubmitButton"]) .block-container,
+    section:has([data-testid="stFormSubmitButton"]),
+    .stApp:has([data-testid="stFormSubmitButton"]),
+    .stApp:has([data-testid="stFormSubmitButton"]) main,
+    .stApp:has([data-testid="stFormSubmitButton"]) .block-container,
+    body:has(.auth-ios-title), html:has(.auth-ios-title),
+    [data-testid="stAppViewContainer"]:has(.auth-ios-title),
+    [data-testid="stAppViewContainer"]:has(.auth-ios-title) main,
+    .stApp:has(.auth-ios-title), .stApp:has(.auth-ios-title) main { background: #0f172a !important; background-color: #0f172a !important; }
+    /* 레이아웃: 비밀번호 화면 중앙 정렬 */
+    [data-testid="stAppViewContainer"]:has([data-testid="stFormSubmitButton"]) .block-container { padding: 2rem 1rem !important; max-width: 100% !important; min-height: 85vh !important; display: flex !important; align-items: center !important; justify-content: center !important; }
+    /* 중앙 컬럼 = iOS 스타일 카드 */
+    [data-testid="stAppViewContainer"]:has([data-testid="stFormSubmitButton"]) .block-container > div > div:nth-child(2) { max-width: 400px !important; margin: 0 auto !important; padding: 2.25rem 2rem !important; background: rgba(30, 41, 59, 0.98) !important; border: 1px solid rgba(51, 65, 85, 0.9) !important; border-radius: 20px !important; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.05) !important; }
     .auth-ios-title { font-size: 1.5rem; font-weight: 700; color: #f1f5f9; text-align: center; margin-bottom: 0.25rem; }
     .auth-ios-sub { font-size: 0.9rem; color: #94a3b8; text-align: center; margin-bottom: 1.25rem; }
     /* iOS 스타일 입력창 */
-    .block-container:has([data-testid="stFormSubmitButton"]) input[type="password"] { background: rgba(15,23,42,0.9) !important; border: 1px solid #334155 !important; border-radius: 12px !important; padding: 14px 16px !important; font-size: 1rem !important; color: #f1f5f9 !important; }
-    .block-container:has([data-testid="stFormSubmitButton"]) input[type="password"]:focus { border-color: #14b8a6 !important; box-shadow: 0 0 0 3px rgba(20,184,166,0.25) !important; outline: none !important; }
+    [data-testid="stAppViewContainer"]:has([data-testid="stFormSubmitButton"]) input[type="password"] { background: rgba(15,23,42,0.9) !important; border: 1px solid #334155 !important; border-radius: 12px !important; padding: 14px 16px !important; font-size: 1rem !important; color: #f1f5f9 !important; }
+    [data-testid="stAppViewContainer"]:has([data-testid="stFormSubmitButton"]) input[type="password"]:focus { border-color: #14b8a6 !important; box-shadow: 0 0 0 3px rgba(20,184,166,0.25) !important; outline: none !important; }
     /* iOS 스타일 버튼 */
-    .block-container:has([data-testid="stFormSubmitButton"]) button[kind="formSubmit"],
-    .block-container:has([data-testid="stFormSubmitButton"]) [data-testid="stFormSubmitButton"] button { width: 100% !important; padding: 14px 20px !important; border-radius: 12px !important; font-weight: 600 !important; font-size: 1rem !important; background: #14b8a6 !important; color: #0f172a !important; border: none !important; box-shadow: 0 2px 10px rgba(20,184,166,0.35) !important; }
-    .block-container:has([data-testid="stFormSubmitButton"]) button[kind="formSubmit"]:hover,
-    .block-container:has([data-testid="stFormSubmitButton"]) [data-testid="stFormSubmitButton"] button:hover { background: #0d9488 !important; box-shadow: 0 4px 14px rgba(20,184,166,0.45) !important; }
+    [data-testid="stAppViewContainer"]:has([data-testid="stFormSubmitButton"]) [data-testid="stFormSubmitButton"] button,
+    [data-testid="stAppViewContainer"]:has([data-testid="stFormSubmitButton"]) button[kind="formSubmit"] { width: 100% !important; padding: 14px 20px !important; border-radius: 12px !important; font-weight: 600 !important; font-size: 1rem !important; background: #14b8a6 !important; color: #0f172a !important; border: none !important; box-shadow: 0 2px 10px rgba(20,184,166,0.35) !important; }
+    [data-testid="stAppViewContainer"]:has([data-testid="stFormSubmitButton"]) [data-testid="stFormSubmitButton"] button:hover { background: #0d9488 !important; box-shadow: 0 4px 14px rgba(20,184,166,0.45) !important; }
     </style>""", unsafe_allow_html=True)
     col_left, col_center, col_right = st.columns([1, 2, 1])
     with col_center:
