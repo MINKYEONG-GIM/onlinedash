@@ -581,15 +581,8 @@ if not st.session_state.is_authed:
         unsafe_allow_html=True,
     )
 
-    st.markdown(
-        """
-        <div class="pw-container">
-            <div class="pw-card">
-                <h3>🔐 비밀번호를 입력하세요</h3>
-        """,
-        unsafe_allow_html=True,
-    )
-
+    st.markdown('<div class="pw-container"><div class="pw-card">', unsafe_allow_html=True)
+    st.markdown('<h3>🔐 비밀번호를 입력하세요</h3>', unsafe_allow_html=True)
     with st.form("password_form", clear_on_submit=False):
         input_pw = st.text_input("", type="password", placeholder="비밀번호 입력")
         submitted = st.form_submit_button("접속")
