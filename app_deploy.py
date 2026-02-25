@@ -594,6 +594,7 @@ for col, label, amt, sty in [(k1, "입고", total_in_amt, total_in_sty), (k2, "�
 st.markdown("<div style='margin-top:80px;'></div>", unsafe_allow_html=True)
 st.markdown("---")
 st.markdown('<div class="section-title">(온라인) 상품등록 모니터링</div>', unsafe_allow_html=True)
+st.markdown('<div style="font-size:0.8rem;color:#cbd5e1;margin-bottom:0.5rem;">가등록한 스타일은 등록으로 인정되지 않습니다 </div>', unsafe_allow_html=True)
 
 df_for_table = df_style_all.copy()
 if selected_seasons and set(selected_seasons) != set(seasons):
