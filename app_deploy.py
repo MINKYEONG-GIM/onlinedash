@@ -509,9 +509,9 @@ with col_head_right:
         st.markdown('<div style="font-weight:600;color:#f8fafc;">2026년</div>', unsafe_allow_html=True)
     with col_season:
         seasons = ["1", "2", "A", "S", "F"]
-        selected_seasons = st.multiselect("시즌", seasons, default=["2"], key="season_filter")
+        selected_seasons = st.multiselect("시즌", seasons, default=seasons, key="season_filter")
     with col_brand:
-        selected_brand = st.selectbox("브랜드", ["브랜드 전체"] + brands_list, key="brand_filter", index=0)
+        selected_brand = st.selectbox("브랜드", brand_options, index=brand_options.index("미쏘"), key="brand_filter")
 
 def _season_matches(season_series, selected_list):
     if not selected_list:
