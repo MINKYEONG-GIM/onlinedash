@@ -509,20 +509,13 @@ with col_head_right:
         st.markdown('<div style="font-weight:600;color:#f8fafc;">2026년</div>', unsafe_allow_html=True)
     
     with col_season:
-    seasons = ["1", "2", "A", "S", "F"]
-    selected_seasons = st.multiselect("시즌", seasons, default=seasons, key="season_filter")
-
-with col_brand:
-    brands_list = ["스파오", "미쏘", "후아유", "로엠", "뉴발란스", "뉴발란스키즈", "슈펜", "에블린", "클라비스"]
-
-    selected_brand = st.selectbox("브랜드", brands_list, index=brands_list.index("미쏘"), key="brand_filter")
-    
-    with col_season:
         seasons = ["1", "2", "A", "S", "F"]
         selected_seasons = st.multiselect("시즌", seasons, default=seasons, key="season_filter")
+
     with col_brand:
         brands_list = ["스파오", "미쏘", "후아유", "로엠", "뉴발란스", "뉴발란스키즈", "슈펜", "에블린", "클라비스"]
-        selected_brand = st.selectbox("브랜드", brands_list, default=["미쏘"], key="brand_filter")
+        selected_brand = st.selectbox("브랜드", brands_list, index=brands_list.index("미쏘"), key="brand_filter")
+    
 
 def _season_matches(season_series, selected_list):
     if not selected_list:
