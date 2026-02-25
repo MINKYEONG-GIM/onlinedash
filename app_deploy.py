@@ -756,7 +756,7 @@ st.markdown('<div style="height:40px;"></div>', unsafe_allow_html=True)
 st.markdown('<div class="section-title">(온/오프 전체) 입출고 현황</div>', unsafe_allow_html=True)
 st.markdown('<div style="font-size:1.1rem;color:#cbd5e1;margin-bottom:0.5rem;">STY 기준 통계</div>', unsafe_allow_html=True)
 display_df = pd.DataFrame(inout_rows)[["브랜드"] + TABLE_COLS]
-st.caption("브랜드명을 클릭하면 시즌별 수치를 보실 수 있습니다")
+st.markdown('<div style="font-size:0.8rem;color:#cbd5e1;margin-bottom:0.5rem;">브랜드명을 클릭하면 시즌별 수치를 보실 수 있습니다</div>', unsafe_allow_html=True)
 try:
     import streamlit.components.v1 as components
     inout_html, row_count = _build_inout_table_html(display_df)
