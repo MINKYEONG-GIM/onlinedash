@@ -9,33 +9,74 @@ import pandas as pd
 from io import BytesIO
 from datetime import datetime
 from google.oauth2.service_account import Credentials
+from streamlit_cookies_manager import EncryptedCookieManager
 
 st.set_page_config(page_title="전 브랜드 스타일 모니터링", layout="wide", initial_sidebar_state="expanded")
+
+
+cookies = EncryptedCookieManager(
+    prefix="style_dashboard",
+    password="very-secret-password"  # 아무 문자열 가능
+)
+
+if not cookies.ready():
+    st.stop()
 
 # ---- 비밀번호 인증 (처음 접속 시) ----
 def _get_expected_password():
     return _secret("DASHBOARD_PASSWORD") or os.environ.get("DASHBOARD_PASSWORD", "").strip()
 
+
+
 def _check_auth():
+    # 1. 세션 초기화
     if "authenticated" not in st.session_state:
         st.session_state.authenticated = False
+
     expected = _get_expected_password()
     if not expected:
         st.session_state.authenticated = True
         return
+
+    # 2. 쿠키에 로그인 기록 있으면 자동 통과
+    if cookies.get("logged_in") == "true":
+        st.session_state.authenticated = True
+        return
+
+    # 3. 이미 인증된 경우
     if st.session_state.authenticated:
         return
-    st.markdown("<div style='max-width:400px;margin:4rem auto;padding:2rem;background:#1e293b;border-radius:12px;border:1px solid #334155;'>", unsafe_allow_html=True)
+
+    # 4. 로그인 UI
+    st.markdown(
+        "<div style='max-width:400px;margin:4rem auto;padding:2rem;"
+        "background:#1e293b;border-radius:12px;border:1px solid #334155;'>",
+        unsafe_allow_html=True
+    )
     st.markdown("### 🔐 비밀번호를 입력하세요")
-    pw = st.text_input("비밀번호", type="password", key="auth_password", placeholder="비밀번호 입력")
+
+    pw = st.text_input(
+        "비밀번호",
+        type="password",
+        key="auth_password",
+        placeholder="비밀번호 입력"
+    )
+
     if st.button("입장", key="auth_submit"):
         if pw.strip() == expected:
             st.session_state.authenticated = True
+
+            # ✅ 쿠키 저장
+            cookies["logged_in"] = "true"
+            cookies.save()
+
             st.rerun()
         else:
-            st.error("비밀번호가 올바르지 않습니다 문의가 있으시면 kim_minkyeong07@eland.co.kr로 부탁드립니다")
+            st.error("비밀번호가 올바르지 않습니다")
+
     st.markdown("</div>", unsafe_allow_html=True)
     st.stop()
+
 
 # ---- 설정 ----
 def _secret(key, default=""):
