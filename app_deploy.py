@@ -761,8 +761,17 @@ table_df = pd.DataFrame({"브랜드": all_brands})
 # 물류입고스타일수: base 스프레드시트 "물류입고스타일수" 시트 기준 (df_in은 이미 해당 시트에서 생성됨)
 table_df["물류입고스타일수"] = table_df["브랜드"].map(df_in.groupby("브랜드")["스타일코드"].nunique()).fillna(0).astype(int)
 
-
-table_df["온라인등록스타일수"] = table_df["브랜드"].map(df_in[df_in["온라인상품등록여부"] == "등록"].groupby("브랜드")["스타일코드"].nunique()).fillna(0).astype(int)
+# 등록 시트 공홈등록일(_regdate_cell_filled) 기준 직접 집계 — merge된 온라인상품등록여부와 불일치 방지
+reg_count_map = {}
+for brand in table_df["브랜드"].unique():
+    cnt = count_registered_styles_from_register_sheet(
+        sources,
+        brand,
+        selected_seasons,
+        seasons,
+    )
+    reg_count_map[brand] = cnt if cnt is not None else 0
+table_df["온라인등록스타일수"] = table_df["브랜드"].map(reg_count_map).fillna(0).astype(int)
 # 온라인등록율 = 브랜드별 (온라인등록스타일수 / 온라인입고스타일수), 단위 %
 denom = table_df["물류입고스타일수"].replace(0, pd.NA)
 table_df["온라인등록율"] = (table_df["온라인등록스타일수"] / denom).fillna(0).round(2)
