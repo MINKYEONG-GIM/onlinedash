@@ -91,11 +91,31 @@ BASE_SPREADSHEET_ID = str(_secret("BASE_SPREADSHEET_ID")).strip() or ""
 ONLINE_SPREADSHEET_ID = str(_secret("ONLINE_SPREADSHEET_ID")).strip() or ""
 GOOGLE_SPREADSHEET_IDS = {"inout": BASE_SPREADSHEET_ID}
 # 온라인 스프레드시트 내 워크시트 이름 = 브랜드명 (예: 스파오 시트에서 스파오 데이터)
-BRAND_KEY_TO_SHEET_NAME = {"spao": "스파오", "whoau": "후아유", "clavis": "클라비스", "mixxo": "미쏘", "roem": "로엠", "shoopen": "슈펜", "eblin": "에블린"}
+BRAND_KEY_TO_SHEET_NAME = {
+    "spao": "스파오",
+    "whoau": "후아유",
+    "clavis": "클라비스",
+    "mixxo": "미쏘",
+    "roem": "로엠",
+    "shoopen": "슈펜",
+    "eblin": "에블린",
+    "newbalance": "뉴발란스",
+    "nbkids": "뉴발란스키즈",
+}
 brands_list = ["스파오", "뉴발란스", "뉴발란스키즈", "후아유", "슈펜", "미쏘", "로엠", "클라비스", "에블린"]
 bu_groups = [("캐쥬얼BU", ["스파오"]), ("스포츠BU", ["뉴발란스", "뉴발란스키즈", "후아유", "슈펜"]), ("여성BU", ["미쏘", "로엠", "클라비스", "에블린"])]
-BRAND_TO_KEY = {"스파오": "spao", "후아유": "whoau", "클라비스": "clavis", "미쏘": "mixxo", "로엠": "roem", "슈펜": "shoopen", "에블린": "eblin"}
-NO_REG_SHEET_BRANDS = {"뉴발란스", "뉴발란스키즈"}
+BRAND_TO_KEY = {
+    "스파오": "spao",
+    "후아유": "whoau",
+    "클라비스": "clavis",
+    "미쏘": "mixxo",
+    "로엠": "roem",
+    "슈펜": "shoopen",
+    "에블린": "eblin",
+    "뉴발란스": "newbalance",
+    "뉴발란스키즈": "nbkids",
+}
+NO_REG_SHEET_BRANDS = set()
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 GOOGLE_SCOPES = ["https://www.googleapis.com/auth/spreadsheets.readonly", "https://www.googleapis.com/auth/drive.readonly"]
 
@@ -313,16 +333,37 @@ def load_brand_register_df(io_bytes=None, _cache_key=None, target_sheet_name=Non
         out["스타일코드"] = data.iloc[:, style_col].astype(str).str.strip()
         out["시즌"] = data.iloc[:, season_col].astype(str).str.strip() if season_col is not None and season_col < data.shape[1] else ""
         reg_series = data.iloc[:, regdate_col]
-        reg_ok = (
-            reg_series.notna()
-            & (reg_series.astype(str).str.strip() != "")
-            & (reg_series.astype(str).str.strip().str.lower() != "nan")
-        )
+        reg_dt = _parse_date_series(reg_series)
+        reg_ok = reg_dt.notna()
         out["온라인상품등록여부"] = reg_ok.map({True: "등록", False: "미등록"})
         out = out[out["스타일코드"].str.len() > 0]
         out = out[out["스타일코드"] != "nan"]
         return out
     return pd.DataFrame()
+
+def count_registered_styles_from_register_sheet(
+    sources, brand_name, selected_seasons, season_options
+):
+    """공홈등록일이 있는 스타일 수(등록 시트 기준). 물류 입고 여부와 무관하게 집계."""
+    if brand_name in NO_REG_SHEET_BRANDS:
+        return None
+    brand_key = BRAND_TO_KEY.get(brand_name)
+    if not brand_key:
+        return None
+    reg_bytes = sources.get(brand_key, (None, None))[0]
+    if not reg_bytes:
+        return None
+    df_reg = load_brand_register_df(
+        reg_bytes,
+        _cache_key=brand_key,
+        target_sheet_name=BRAND_KEY_TO_SHEET_NAME.get(brand_key),
+    )
+    if df_reg.empty:
+        return 0
+    d = df_reg[df_reg["온라인상품등록여부"] == "등록"].copy()
+    if selected_seasons and season_options and set(selected_seasons) != set(season_options):
+        d = d[_season_matches(d["시즌"], selected_seasons)]
+    return int(d["스타일코드"].map(_norm).nunique())
 
 def _parse_date_series(col_series):
     """컬럼 시리즈를 날짜 시리즈로 변환 (엑셀 숫자일 포함)."""
@@ -477,8 +518,14 @@ def build_style_table_all(sources):
             df_reg = load_brand_register_df(reg_bytes, _cache_key=brand_key, target_sheet_name=BRAND_KEY_TO_SHEET_NAME.get(brand_key))
             if not df_reg.empty:
                 df_reg = df_reg.copy()
-                df_reg["스타일코드_norm"] = df_reg["스타일코드"].str.strip()
-                merged = b_agg.merge(df_reg[["스타일코드_norm", "온라인상품등록여부"]], left_on="스타일코드", right_on="스타일코드_norm", how="left")
+                df_reg["스타일코드_norm"] = df_reg["스타일코드"].map(_norm)
+                reg_one = (
+                    df_reg.groupby("스타일코드_norm", as_index=False)["온라인상품등록여부"]
+                    .agg(lambda s: "등록" if (s == "등록").any() else "미등록")
+                )
+                b_merge = b_agg.copy()
+                b_merge["스타일코드_norm"] = b_merge["스타일코드"].map(_norm)
+                merged = b_merge.merge(reg_one, on="스타일코드_norm", how="left")
                 for _, r in merged.iterrows():
                     reg = r.get("온라인상품등록여부", "미등록")
                     if pd.isna(reg) or str(reg).strip() == "":
