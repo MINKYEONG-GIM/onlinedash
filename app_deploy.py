@@ -14,6 +14,8 @@ from streamlit_cookies_manager import EncryptedCookieManager
 st.set_page_config(page_title="미사용", layout="wide", initial_sidebar_state="expanded")
 
 
+
+# st.markdown('<div class="section-title"> 온라인 상품 대시보드 주소가 이전되었습니다. </div>', unsafe_allow_html=True)
 st.markdown(
     '''
     <div style="text-align:center; margin-top:30px;">
