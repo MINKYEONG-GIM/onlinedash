@@ -11,7 +11,7 @@ from datetime import datetime
 from google.oauth2.service_account import Credentials
 from streamlit_cookies_manager import EncryptedCookieManager
 
- st.set_page_config(page_title="미사용", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="미사용", layout="wide", initial_sidebar_state="expanded")
 
 # st.set_page_config(page_title="전 브랜드 스타일 모니터링", layout="wide", initial_sidebar_state="expanded")
 
