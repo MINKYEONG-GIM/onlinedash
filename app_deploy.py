@@ -1,21 +1,17 @@
+# -*- coding: utf-8 -*-
+"""브랜드별·시즌별 스타일 입고/출고/온라인등록 실시간 모니터링. """
+from __future__ import annotations
+
+import os
+import html as html_lib
+import streamlit as st
+import pandas as pd
+from io import BytesIO
+from datetime import datetime
+from google.oauth2.service_account import Credentials
+from streamlit_cookies_manager import EncryptedCookieManager
+
  st.set_page_config(page_title="미사용", layout="wide", initial_sidebar_state="expanded")
-
-
-
-
-
-# # -*- coding: utf-8 -*-
-# """브랜드별·시즌별 스타일 입고/출고/온라인등록 실시간 모니터링. """
-# from __future__ import annotations
-
-# import os
-# import html as html_lib
-# import streamlit as st
-# import pandas as pd
-# from io import BytesIO
-# from datetime import datetime
-# from google.oauth2.service_account import Credentials
-# from streamlit_cookies_manager import EncryptedCookieManager
 
 # st.set_page_config(page_title="전 브랜드 스타일 모니터링", layout="wide", initial_sidebar_state="expanded")
 
