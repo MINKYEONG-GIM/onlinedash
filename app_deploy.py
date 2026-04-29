@@ -14,8 +14,25 @@ from streamlit_cookies_manager import EncryptedCookieManager
 st.set_page_config(page_title="미사용", layout="wide", initial_sidebar_state="expanded")
 
 
-st.markdown('<div class="section-title">본 주소는 더이상 관리되지 않습니다. https://onlinedash20.vercel.app/로 이동되었습니다.</div>', unsafe_allow_html=True)
-
+st.markdown(
+    '''
+    <div style="text-align:center; margin-top:30px;">
+        <a href="https://onlinedash20.vercel.app/" target="_blank"
+           style="
+               display:inline-block;
+               padding:12px 24px;
+               background-color:#ff4b4b;
+               color:white;
+               text-decoration:none;
+               border-radius:8px;
+               font-weight:bold;
+           ">
+           👉 새 주소로 이동하기
+        </a>
+    </div>
+    ''',
+    unsafe_allow_html=True
+)
 
 --------------------원본 코드----------------------------
 
