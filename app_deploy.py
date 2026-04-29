@@ -13,6 +13,9 @@ from streamlit_cookies_manager import EncryptedCookieManager
 
 st.set_page_config(page_title="미사용", layout="wide", initial_sidebar_state="expanded")
 
+
+st.markdown('<div class="section-title">본 주소는 더이상 관리되지 않습니다. https://onlinedash20.vercel.app/로 이동되었습니다.</div>', unsafe_allow_html=True)
+
 # st.set_page_config(page_title="전 브랜드 스타일 모니터링", layout="wide", initial_sidebar_state="expanded")
 
 
