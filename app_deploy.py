@@ -14,19 +14,33 @@ from streamlit_cookies_manager import EncryptedCookieManager
 st.set_page_config(page_title="미사용", layout="wide", initial_sidebar_state="expanded")
 
 
-st.markdown('<div class="section-title"> 온라인 상품 대시보드 주소가 이전되었습니다. </div>', unsafe_allow_html=True)
+st.markdown(
+    '''
+    <div style="
+        text-align:center;
+        font-size:24px;
+        font-weight:bold;
+        margin-top:40px;
+    ">
+        온라인 상품 대시보드 주소가 이전되었습니다.
+    </div>
+    ''',
+    unsafe_allow_html=True
+)
+
 st.markdown(
     '''
     <div style="text-align:center; margin-top:30px;">
         <a href="https://onlinedash20.vercel.app/" target="_blank"
            style="
                display:inline-block;
-               padding:12px 24px;
+               padding:14px 28px;
                background-color:#ff4b4b;
                color:white;
                text-decoration:none;
-               border-radius:8px;
+               border-radius:10px;
                font-weight:bold;
+               font-size:16px;
            ">
            👉 새 주소로 이동하기
         </a>
