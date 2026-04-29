@@ -16,6 +16,22 @@ st.set_page_config(page_title="미사용", layout="wide", initial_sidebar_state=
 
 st.markdown('<div class="section-title">본 주소는 더이상 관리되지 않습니다. https://onlinedash20.vercel.app/로 이동되었습니다.</div>', unsafe_allow_html=True)
 
+
+--------------------원본 코드----------------------------
+
+# # -*- coding: utf-8 -*-
+# """브랜드별·시즌별 스타일 입고/출고/온라인등록 실시간 모니터링. """
+# from __future__ import annotations
+
+# import os
+# import html as html_lib
+# import streamlit as st
+# import pandas as pd
+# from io import BytesIO
+# from datetime import datetime
+# from google.oauth2.service_account import Credentials
+# from streamlit_cookies_manager import EncryptedCookieManager
+
 # st.set_page_config(page_title="전 브랜드 스타일 모니터링", layout="wide", initial_sidebar_state="expanded")
 
 
